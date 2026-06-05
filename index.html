@@ -231,8 +231,8 @@
                         {manager ? (
                         <>
                             <div className="relative mb-3 group-hover:scale-105 transition-transform duration-300">
-                            <div className="absolute inset-0 bg-[#dfa634] rounded-full blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
-                            <img src={manager.profilePhoto} className="relative w-16 h-16 rounded-full object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={manager.name} />
+                            <div className="absolute inset-0 bg-[#dfa634] rounded-xl blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
+                            <img src={manager.profilePhoto} className="relative w-[90px] aspect-square rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={manager.name} />
                             </div>
                             <p className="text-sm font-extrabold text-gray-800 truncate w-full text-center group-hover:text-[#4a3189] transition-colors">{manager.name}</p>
                             <p className="text-[10px] font-bold text-[#dfa634] truncate w-full text-center mt-1 uppercase tracking-wider">{manager.role}</p>
@@ -255,9 +255,9 @@
                                     <div 
                                     key={idx} 
                                     onClick={(e) => { e.stopPropagation(); if(onEmployeeClick) onEmployeeClick(s); }}
-                                    className="bg-white border border-gray-200/80 shadow-sm rounded-xl p-3 flex flex-col items-center w-[104px] hover:border-[#dfa634]/60 hover:shadow-md cursor-pointer transition-all hover:-translate-y-1 group/staff"
+                                    className="bg-white border border-gray-200/80 shadow-sm rounded-xl p-3 flex flex-col items-center w-[110px] hover:border-[#dfa634]/60 hover:shadow-md cursor-pointer transition-all hover:-translate-y-1 group/staff"
                                     >
-                                    <img src={s.profilePhoto} className="w-12 h-12 rounded-full mb-2 object-cover shadow-sm ring-2 ring-gray-50 group-hover/staff:ring-[#dfa634]/30 transition-all" alt={s.name} />
+                                    <img src={s.profilePhoto} className="w-[84px] aspect-square rounded-xl mb-2 object-cover shadow-sm ring-2 ring-gray-50 group-hover/staff:ring-[#dfa634]/30 transition-all" alt={s.name} />
                                     <p className="text-[10px] font-extrabold text-gray-800 text-center leading-tight truncate w-full group-hover/staff:text-[#4a3189]">{s.name}</p>
                                     <p className="text-[8px] font-medium text-[#dfa634] text-center leading-tight truncate w-full mt-1">{s.role}</p>
                                     </div>
@@ -416,6 +416,21 @@
 
             const handleExport = async (format) => {
                 setAlertDialog(`Preparing ${format.toUpperCase()} export... Please wait.`);
+                
+                // FIX: Temporarily reset viewport transforms
+                // html2canvas produces misaligned text and photos when capturing elements 
+                // inside a scaled/translated container. Resetting to 1:1 fixes the alignment.
+                const prevZoom = orgZoomLevel;
+                const prevPan = orgPan;
+                const wasEditing = isEditingOrg;
+                
+                setOrgZoomLevel(1);
+                setOrgPan({ x: 0, y: 0 });
+                setIsEditingOrg(false); // Hide edit buttons for clean export
+                
+                // Wait for React to re-render and CSS transitions to finish smoothly
+                await new Promise(resolve => setTimeout(resolve, 400));
+                
                 try {
                 if (!window.html2canvas) {
                     await new Promise((resolve) => {
@@ -431,9 +446,16 @@
                 
                 const canvas = await window.html2canvas(element, {
                     backgroundColor: '#f4f7fa',
-                    scale: 2, 
+                    scale: 2, // High resolution for clear text/photos
                     useCORS: true,
-                    logging: false
+                    logging: false,
+                    // Explicitly define dimensions to prevent viewport clipping
+                    width: element.scrollWidth,
+                    height: element.scrollHeight,
+                    windowWidth: element.scrollWidth,
+                    windowHeight: element.scrollHeight,
+                    x: 0,
+                    y: 0
                 });
 
                 if (format === 'png') {
@@ -464,6 +486,12 @@
                 } catch (error) {
                 console.error('Export failed:', error);
                 setAlertDialog('Export failed. Please try again or check console for details.');
+                } finally {
+                // Restore original viewport and edit states
+                setOrgZoomLevel(prevZoom);
+                setOrgPan(prevPan);
+                setIsEditingOrg(wasEditing);
+                setAlertDialog(null);
                 }
             };
 
@@ -497,7 +525,7 @@
                     contactNumber: 'TBD',
                     branchOffice: 'HQ',
                     insurance: 'Staff member',
-                    joinDate: new Date().toISOString().split('T')[0],
+                    joinDate: new Date().toISOString().split('T'),
                     profilePhoto: `https://randomuser.me/api/portraits/${newEmployeeForm.gender === 'Female' ? 'women' : 'men'}/${Math.floor(Math.random() * 90) + 1}.jpg`
                 };
 
@@ -736,7 +764,7 @@
                         transition: isDraggingOrg ? 'none' : 'transform 0.1s ease-out'
                         }}
                     >
-                        <div className="modern-tree inline-block" id="org-chart-export-area">
+                        <div className="modern-tree inline-block p-12" id="org-chart-export-area">
                         <ul>
                             {activeOrgTab === 'Overall Structure' ? (
                             <li>
@@ -755,8 +783,8 @@
                                     </div>
                                     <div className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl pt-10 pb-5 px-6 w-72 flex items-center flex-col relative group-hover:shadow-2xl transition-all">
                                     <div className="relative mb-3">
-                                        <div className="absolute inset-0 bg-[#dfa634] rounded-full blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
-                                        <img src={rootManager.profilePhoto} className="relative w-16 h-16 rounded-full object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootManager.name} />
+                                        <div className="absolute inset-0 bg-[#dfa634] rounded-xl blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
+                                        <img src={rootManager.profilePhoto} className="relative w-[90px] aspect-square rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootManager.name} />
                                     </div>
                                     <p className="text-sm font-extrabold text-gray-800 hover:text-[#4a3189] transition-colors">{rootManager.name}</p>
                                     <p className="text-[10px] font-bold text-[#dfa634] uppercase tracking-wider mt-1">{rootManager.role}</p>
@@ -768,9 +796,9 @@
                                     <div className="absolute top-1/2 right-1/2 flex items-center pr-0 transform -translate-y-1/2">
                                         <div 
                                         onClick={() => { setSelectedEmployeeProfile(rootAssistant); setEditingPhotoId(null); }}
-                                        className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-full p-2 w-56 flex items-center z-10 relative group hover:shadow-2xl hover:-translate-y-0.5 transition-all cursor-pointer"
+                                        className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-2xl p-2.5 w-56 flex items-center z-10 relative group hover:shadow-2xl hover:-translate-y-0.5 transition-all cursor-pointer"
                                         >
-                                        <img src={rootAssistant.profilePhoto} className="w-10 h-10 rounded-full mr-3 object-cover shadow-sm ring-2 ring-white border border-gray-100" alt={rootAssistant.name} />
+                                        <img src={rootAssistant.profilePhoto} className="w-[56px] aspect-square rounded-lg mr-3 object-cover shadow-sm ring-2 ring-white border border-gray-100" alt={rootAssistant.name} />
                                         <div className="text-left overflow-hidden">
                                             <p className="text-[10px] font-extrabold text-gray-800 truncate group-hover:text-[#4a3189] transition-colors">{rootAssistant.name}</p>
                                             <p className="text-[8px] font-bold text-[#4a3189] truncate mt-0.5">{rootAssistant.role}</p>
@@ -806,7 +834,7 @@
                         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 mix-blend-overlay"></div>
                         
                         <div className="relative z-10 mr-8 flex-shrink-0 flex flex-col items-center">
-                            <img src={selectedEmployeeProfile.profilePhoto} className="w-48 h-48 rounded-2xl object-cover shadow-2xl ring-4 ring-white/20 bg-white/10" alt={selectedEmployeeProfile.name} />
+                            <img src={selectedEmployeeProfile.profilePhoto} className="w-48 aspect-square rounded-3xl object-cover shadow-2xl ring-4 ring-white/20 bg-white/10" alt={selectedEmployeeProfile.name} />
                             
                             {editingPhotoId === selectedEmployeeProfile.id ? (
                             <div className="mt-4 w-48 flex flex-col gap-2 bg-white/10 p-3 rounded-xl backdrop-blur-md border border-white/20">
@@ -904,7 +932,7 @@
                 )}
 
                 {addMenuConfig && (
-                    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="fixed inset-0 bg-black/50 z- flex items-center justify-center p-4 backdrop-blur-sm">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col relative transform transition-all">
                         <button onClick={() => setAddMenuConfig(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-800 hover:bg-gray-100 p-2 rounded-full transition z-10"><X className="w-5 h-5" /></button>
                         <div className="p-6 pt-8 border-b border-gray-100 bg-gray-50 text-center">
@@ -950,7 +978,7 @@
                 )}
 
                 {newEmployeeForm && (
-                    <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="fixed inset-0 bg-black/50 z- flex items-center justify-center p-4 backdrop-blur-sm">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
                         <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gradient-to-r from-[#dfa634] to-[#f5c76a] text-white">
                         <h3 className="text-lg font-bold flex items-center"><UserPlus className="w-5 h-5 mr-2" /> Add New Team Member</h3>
@@ -1077,7 +1105,7 @@
                                         }
                                     }}
                                     />
-                                    <img src={emp.profilePhoto} className="w-8 h-8 rounded-full object-cover border border-gray-100" alt="" />
+                                    <img src={emp.profilePhoto} className="w-10 aspect-square rounded-lg object-cover border border-gray-100" alt="" />
                                     <div className="flex-1 overflow-hidden">
                                     <p className="text-xs font-bold text-gray-800 truncate leading-tight">{emp.name}</p>
                                     <p className="text-[10px] text-gray-500 truncate leading-tight mt-0.5">{emp.role} • {emp.dept}</p>
@@ -1117,7 +1145,7 @@
                 )}
 
                 {alertDialog && (
-                    <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="fixed inset-0 bg-black/40 z- flex items-center justify-center p-4 backdrop-blur-sm">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center transform transition-all">
                         <h3 className="text-lg font-bold text-gray-800 mb-2">System Notice</h3>
                         <p className="text-sm text-gray-600 mb-6">{alertDialog}</p>
@@ -1132,7 +1160,7 @@
                 )}
 
                 {confirmDialog && (
-                    <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="fixed inset-0 bg-black/40 z- flex items-center justify-center p-4 backdrop-blur-sm">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center transform transition-all">
                         <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
                         <Trash2 className="w-6 h-6 text-red-500" />
