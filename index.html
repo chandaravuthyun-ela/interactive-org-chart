@@ -150,10 +150,47 @@
             ]
         };
 
-        const ModernOrgNode = ({ dept, manager, staffList, children, onEmployeeClick, isEditing, onEdit, onAddMenu, onDelete, isRoot, alignDrop }) => {
+        const processImageFile = (file, callback) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX_WIDTH = 600; 
+                    const MAX_HEIGHT = 600;
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > MAX_WIDTH) {
+                            height *= MAX_WIDTH / width;
+                            width = MAX_WIDTH;
+                        }
+                    } else {
+                        if (height > MAX_HEIGHT) {
+                            width *= MAX_HEIGHT / height;
+                            height = MAX_HEIGHT;
+                        }
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                    callback(dataUrl);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        };
+
+        const ModernOrgNode = ({ dept, manager, staffList, children, onEmployeeClick, isEditing, onEdit, onAddMenu, onDelete, isRoot, alignDrop, forceExpand }) => {
             const [expanded, setExpanded] = useState(false);
             const hasChildren = React.Children.count(children) > 0;
             const hasStaff = staffList && staffList.length > 0;
+            const isNodeExpanded = expanded || forceExpand;
 
             const isEmptyNode = !manager && !hasStaff;
 
@@ -241,7 +278,7 @@
                     </div>
 
                     {hasStaff && (
-                        <div className={`overflow-hidden transition-all duration-300 ease-in-out ${expanded ? 'max-h-[1500px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                        <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isNodeExpanded ? 'max-h-[5000px] opacity-100' : 'max-h-0 opacity-0'}`}>
                         <div className="flex flex-col items-center w-full px-3 pb-8 pt-0 border-t border-gray-100/60 bg-gray-50/50 rounded-b-3xl">
                             {tiers.map((tier, tIndex) => (
                             <div key={tIndex} className="flex flex-col items-center w-full">
@@ -275,7 +312,7 @@
                         className="absolute -bottom-4 left-1/2 transform -translate-x-1/2 z-20 cursor-pointer"
                         >
                         <div className="bg-white border border-gray-200 text-gray-400 hover:text-[#4a3189] hover:border-[#4a3189] w-8 h-8 rounded-full flex items-center justify-center shadow-md transition-all hover:scale-110">
-                            {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4 transform rotate-90" />}
+                            {isNodeExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4 transform rotate-90" />}
                         </div>
                         </div>
                     )}
@@ -367,6 +404,7 @@
             const [isDraggingOrg, setIsDraggingOrg] = useState(false);
             const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
             const [activeOrgTab, setActiveOrgTab] = useState('Overall Structure');
+            const [forceExpand, setForceExpand] = useState(false);
             
             const orgTabs = useMemo(() => ['Overall Structure', ...(orgData?.children?.map(c => c.dept) || [])], [orgData]);
 
@@ -427,9 +465,10 @@
                 setOrgZoomLevel(1);
                 setOrgPan({ x: 0, y: 0 });
                 setIsEditingOrg(false); // Hide edit buttons for clean export
+                setForceExpand(true);   // Automatically expand all branches to show staff photos
                 
                 // Wait for React to re-render and CSS transitions to finish smoothly
-                await new Promise(resolve => setTimeout(resolve, 400));
+                await new Promise(resolve => setTimeout(resolve, 800));
                 
                 try {
                 if (!window.html2canvas) {
@@ -491,6 +530,7 @@
                 setOrgZoomLevel(prevZoom);
                 setOrgPan(prevPan);
                 setIsEditingOrg(wasEditing);
+                setForceExpand(false);
                 setAlertDialog(null);
                 }
             };
@@ -559,6 +599,7 @@
                     dept={node.dept} 
                     manager={manager} 
                     staffList={staff} 
+                    forceExpand={forceExpand}
                     onEmployeeClick={(emp) => {
                         setSelectedEmployeeProfile(emp);
                         setEditingPhotoId(null);
@@ -837,17 +878,27 @@
                             <img src={selectedEmployeeProfile.profilePhoto} className="w-48 aspect-square rounded-3xl object-cover shadow-2xl ring-4 ring-white/20 bg-white/10" alt={selectedEmployeeProfile.name} />
                             
                             {editingPhotoId === selectedEmployeeProfile.id ? (
-                            <div className="mt-4 w-48 flex flex-col gap-2 bg-white/10 p-3 rounded-xl backdrop-blur-md border border-white/20">
+                            <div className="mt-4 w-56 flex flex-col gap-2 bg-white/10 p-3 rounded-xl backdrop-blur-md border border-white/20">
+                                <label className="block text-xs font-bold text-white/80 mb-1">Upload Local Image</label>
                                 <input 
-                                type="text" 
-                                value={tempPhotoUrl} 
-                                onChange={e => setTempPhotoUrl(e.target.value)} 
-                                placeholder="Paste new image URL..." 
-                                className="w-full p-2 text-xs rounded-lg text-gray-800 outline-none focus:ring-2 focus:ring-[#dfa634]"
+                                type="file" 
+                                accept="image/*"
+                                onChange={(e) => {
+                                    const file = e.target.files;
+                                    if (file) {
+                                        processImageFile(file, (base64) => setTempPhotoUrl(base64));
+                                    }
+                                }} 
+                                className="w-full text-[10px] text-white file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[10px] file:font-bold file:bg-[#dfa634] file:text-white hover:file:bg-[#e6b34d] cursor-pointer"
                                 />
-                                <div className="flex gap-2">
+                                {tempPhotoUrl && tempPhotoUrl !== selectedEmployeeProfile.profilePhoto && (
+                                    <div className="mt-2 flex justify-center bg-black/20 rounded-lg p-2">
+                                        <img src={tempPhotoUrl} className="w-16 aspect-square object-cover rounded-md ring-2 ring-white/50 shadow-lg" alt="Preview" />
+                                    </div>
+                                )}
+                                <div className="flex gap-2 mt-2">
                                 <button onClick={() => handleSavePhoto(selectedEmployeeProfile.id)} className="flex-1 bg-[#dfa634] hover:bg-[#e6b34d] text-white text-xs font-bold py-2 rounded-lg transition shadow-md">Save</button>
-                                <button onClick={() => setEditingPhotoId(null)} className="flex-1 bg-white/20 hover:bg-white/30 text-white text-xs font-bold py-2 rounded-lg transition shadow-sm">Cancel</button>
+                                <button onClick={() => { setEditingPhotoId(null); setTempPhotoUrl(''); }} className="flex-1 bg-white/20 hover:bg-white/30 text-white text-xs font-bold py-2 rounded-lg transition shadow-sm">Cancel</button>
                                 </div>
                             </div>
                             ) : (
