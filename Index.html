@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Org Chart</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Firebase is imported here, ready for your configuration when you want a backend -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // When you are ready, replace this with your Firebase Console Config!
+        const firebaseConfig = {
+            // apiKey: "AIzaSyCmf4PPgiOQjEHsLQ8HEaAWW5PqRF1qaUQ",
+            // authDomain: "org-chart---eevsc.firebaseapp.com",
+            // projectId: "org-chart---eevsc",
+            // storageBucket: "org-chart---eevsc.firebasestorage.app",
+            // messagingSenderId: "874315078989",
+            // appId: "1:874315078989:web:56eebbd88885e60ca56b04"
+        };
+         const app = initializeApp(firebaseConfig);
+         const db = getFirestore(app);
+         window.db = db; // Makes it accessible inside React
+    </script>
+
+    <!-- This allows us to use React and Lucide Icons directly in the browser without NPM! -->
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "lucide-react": "https://esm.sh/lucide-react@0.292.0"
+        }
+    }
+    </script>
+</head>
+<body class="bg-[#f4f7fa]">
+    
+    <!-- The container where React will load our app -->
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useMemo } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            ChevronDown, ChevronRight, Plus, X, Trash2, Edit,
+            Download, Building, Users, Network, Briefcase, Minus, User, Mail, Phone, Calendar, Save, Camera, UserPlus, Image as ImageIcon
+        } from 'lucide-react';
+
+        const ModernOrgNode = ({ dept, manager, staffList, children, onEmployeeClick, isEditing, onEdit, onAddMenu, onDelete, isRoot, alignDrop }) => {
+            const [expanded, setExpanded] = useState(false);
+            const hasChildren = React.Children.count(children) > 0;
+            const hasStaff = staffList && staffList.length > 0;
+
+            const isEmptyNode = !manager && !hasStaff;
+
+            if (isEmptyNode) {
+                return (
+                <li>
+                    <div className="flex flex-col items-center relative group w-72 mx-auto h-[3rem]">
+                    {isEditing && (
+                        <div className="absolute -top-8 flex space-x-1 z-30">
+                        <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="bg-blue-500 text-white p-1.5 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit"><Edit className="w-3 h-3" /></button>
+                        <button onClick={(e) => { e.stopPropagation(); onAddMenu(); }} className="bg-green-500 text-white p-1.5 rounded-full shadow-lg hover:bg-green-600 transition" title="Add"><Plus className="w-3 h-3" /></button>
+                        {!isRoot && <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition" title="Delete"><Trash2 className="w-3 h-3" /></button>}
+                        </div>
+                    )}
+                    <div className="absolute -top-4 left-1/2 transform -translate-x-1/2 bg-gradient-to-r from-[#292c44] to-[#3a3e5c] text-white font-extrabold text-[12px] uppercase tracking-[0.2em] px-8 py-3 rounded-xl shadow-xl border border-white/10 ring-2 ring-[#dfa634]/50 z-10 w-max">
+                        {dept}
+                    </div>
+                    </div>
+                    {hasChildren && <ul>{children}</ul>}
+                </li>
+                )
+            }
+
+            const topTier = [];
+            const midTier = [];
+            const lowTier = [];
+
+            if (hasStaff) {
+                staffList.forEach(s => {
+                const role = (s.role || '').toLowerCase();
+                if (role.includes('lead') || role.includes('senior') || role.includes('manager') || role.includes('head') || role.includes('director') || role.includes('coordinator')) {
+                    topTier.push(s);
+                } else if (role.includes('junior') || role.includes('assistant') || role.includes('intern')) {
+                    lowTier.push(s);
+                } else {
+                    midTier.push(s);
+                }
+                });
+            }
+
+            const tiers = [];
+            if (topTier.length > 0) tiers.push({ name: 'Leads & Seniors', data: topTier });
+            if (midTier.length > 0) tiers.push({ name: 'Core Staff', data: midTier });
+            if (lowTier.length > 0) tiers.push({ name: 'Juniors & Support', data: lowTier });
+
+            return (
+                <li>
+                <div className="flex flex-col items-center">
+                    {alignDrop && (
+                    <div className="flex flex-col items-center w-full">
+                        <div className="font-extrabold text-[12px] uppercase tracking-[0.2em] px-8 py-3 border-2 invisible pointer-events-none">SPACER</div>
+                        <div className="w-[3px] h-[30px] bg-[#e2d8f0]"></div>
+                    </div>
+                    )}
+                    <div className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-72 transition-all duration-300 z-10 relative flex flex-col group hover:shadow-2xl hover:-translate-y-1 mx-auto">
+                    
+                    {isEditing && (
+                        <div className="absolute -top-4 -right-4 flex space-x-1 z-30">
+                        <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Department"><Edit className="w-3 h-3" /></button>
+                        <button onClick={(e) => { e.stopPropagation(); onAddMenu(); }} className="bg-green-500 text-white p-2 rounded-full shadow-lg hover:bg-green-600 transition" title="Add Sub-Department or Staff"><Plus className="w-3 h-3" /></button>
+                        {!isRoot && <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="bg-red-500 text-white p-2 rounded-full shadow-lg hover:bg-red-600 transition" title="Delete Department"><Trash2 className="w-3 h-3" /></button>}
+                        </div>
+                    )}
+
+                    <div className="absolute -top-4 left-1/2 transform -translate-x-1/2 z-20 w-max">
+                        <div className="bg-[#292c44] text-white font-bold text-[10px] uppercase tracking-widest px-5 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30">
+                        {dept}
+                        </div>
+                    </div>
+                    
+                    {}
+                    <div 
+                        onClick={(e) => { e.stopPropagation(); if(manager && onEmployeeClick) onEmployeeClick(manager); }}
+                        className={`pt-10 pb-5 px-6 flex flex-col items-center ${manager ? 'cursor-pointer' : ''}`}
+                    >
+                        {manager ? (
+                        <>
+                            <div className="relative mb-3 group-hover:scale-105 transition-transform duration-300">
+                            <div className="absolute inset-0 bg-[#dfa634] rounded-full blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
+                            <img src={manager.profilePhoto} className="relative w-16 h-16 rounded-full object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={manager.name} />
+                            </div>
+                            <p className="text-sm font-extrabold text-gray-800 truncate w-full text-center group-hover:text-[#4a3189] transition-colors">{manager.name}</p>
+                            <p className="text-[10px] font-bold text-[#dfa634] truncate w-full text-center mt-1 uppercase tracking-wider">{manager.role}</p>
+                        </>
+                        ) : null}
+                    </div>
+
+                    {}
+                    {hasStaff && (
+                        <div className={`overflow-hidden transition-all duration-300 ease-in-out ${expanded ? 'max-h-[1500px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                        <div className="flex flex-col items-center w-full px-3 pb-8 pt-0 border-t border-gray-100/60 bg-gray-50/50 rounded-b-3xl">
+                            {tiers.map((tier, tIndex) => (
+                            <div key={tIndex} className="flex flex-col items-center w-full">
+                                <div className="flex flex-col items-center">
+                                <div className="w-[2px] h-6 bg-gradient-to-b from-[#4a3189]/40 to-[#4a3189]/10"></div>
+                                <ChevronDown className="w-4 h-4 text-[#4a3189]/40 -mt-1.5" />
+                                </div>
+                                <span className="text-[9px] font-bold text-[#4a3189] uppercase tracking-widest mb-3 text-center bg-purple-100/50 px-3 py-1 rounded-full border border-purple-200/50 shadow-sm">{tier.name}</span>
+                                <div className="flex flex-wrap justify-center gap-3 px-1">
+                                {tier.data.map((s, idx) => (
+                                    <div 
+                                    key={idx} 
+                                    onClick={(e) => { e.stopPropagation(); if(onEmployeeClick) onEmployeeClick(s); }}
+                                    className="bg-white border border-gray-200/80 shadow-sm rounded-xl p-3 flex flex-col items-center w-[104px] hover:border-[#dfa634]/60 hover:shadow-md cursor-pointer transition-all hover:-translate-y-1 group/staff"
+                                    >
+                                    <img src={s.profilePhoto} className="w-12 h-12 rounded-full mb-2 object-cover shadow-sm ring-2 ring-gray-50 group-hover/staff:ring-[#dfa634]/30 transition-all" alt={s.name} />
+                                    <p className="text-[10px] font-extrabold text-gray-800 text-center leading-tight truncate w-full group-hover/staff:text-[#4a3189]">{s.name}</p>
+                                    <p className="text-[8px] font-medium text-[#dfa634] text-center leading-tight truncate w-full mt-1">{s.role}</p>
+                                    </div>
+                                ))}
+                                </div>
+                            </div>
+                            ))}
+                        </div>
+                        </div>
+                    )}
+
+                    {}
+                    {hasStaff && (
+                        <div 
+                        onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+                        className="absolute -bottom-4 left-1/2 transform -translate-x-1/2 z-20 cursor-pointer"
+                        >
+                        <div className="bg-white border border-gray-200 text-gray-400 hover:text-[#4a3189] hover:border-[#4a3189] w-8 h-8 rounded-full flex items-center justify-center shadow-md transition-all hover:scale-110">
+                            {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4 transform rotate-90" />}
+                        </div>
+                        </div>
+                    )}
+                    </div>
+                </div>
+                
+                {hasChildren && (
+                    <ul>
+                    {children}
+                    </ul>
+                )}
+                </li>
+            );
+        };
+
+        function App() {
+            const [allEmployeesList, setAllEmployeesList] = useState(() => {
+                const rawData = [
+                { id: 1, name: "Soknoeun SOEUN", role: "Senior Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+                { id: 2, name: "Molyrattana SOVATH", role: "Finance Manager", gender: "Female", dept: "Finance", insurance: "Management" },
+                { id: 3, name: "Sambo LIM", role: "Education Consultant", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+                { id: 4, name: "Annee CHOUR", role: "Senior Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+                { id: 5, name: "Soreach MEAS", role: "Marketing Officer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
+                { id: 6, name: "Vantak CHHEANG", role: "Country Director", gender: "Male", dept: "Management", insurance: "Management" },
+                { id: 7, name: "Chanseyma KHIEV", role: "Lead Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+                { id: 8, name: "Panha VAT", role: "Lead Counsellor", gender: "Male", dept: "Student Placement", insurance: "Staff member" },
+                { id: 9, name: "Sovannarith CHHEM", role: "Executive Assistant and Marketing Officer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
+                { id: 10, name: "Seyha MAO", role: "Senior Graphic Designer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
+                { id: 11, name: "Sunmean VA", role: "Graphic Designer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
+                { id: 12, name: "Leechuninn PHANG", role: "Business Development & Marketing Manager", gender: "Male", dept: "Marketing", insurance: "Management" },
+                { id: 13, name: "Molika MENG", role: "Office Manager - Phnom Penh City", gender: "Female", dept: "Student Placement", insurance: "Management" },
+                { id: 14, name: "Haingtek LAY", role: "Assistant Manager", gender: "Male", dept: "Student Placement", insurance: "Staff member" },
+                { id: 15, name: "Henghort TEAN", role: "HR Manager", gender: "Male", dept: "HR", insurance: "Management" },
+                { id: 16, name: "Sovannara KONG", role: "Client Service Officer", gender: "Female", dept: "Client Service", insurance: "Staff member" },
+                { id: 17, name: "Meng kheang TANG", role: "Senior Counsellor", gender: "Male", dept: "Student Placement", insurance: "Staff member" },
+                { id: 18, name: "Vothana CHHOEURY", role: "Office Manager - Siem Reap City", gender: "Male", dept: "Student Placement", insurance: "Management" },
+                { id: 19, name: "Mane SAMBATH", role: "Translation - Team Lead", gender: "Female", dept: "Translation", insurance: "Staff member" },
+                { id: 20, name: "Malish VANN", role: "Education Consultant", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+                { id: 21, name: "Somealea KHUN", role: "Project Coordinator", gender: "Female", dept: "Project", insurance: "Staff member" },
+                { id: 22, name: "Nget KAO", role: "English- khmer Translator", gender: "Male", dept: "Translation", insurance: "Staff member" },
+                { id: 23, name: "Deap SOCHYNA", role: "Marketing Assistant", gender: "Female", dept: "Marketing", insurance: "Staff member" },
+                { id: 24, name: "Vutha ROS", role: "Academic Manager", gender: "Male", dept: "Academic", insurance: "Management" },
+                { id: 25, name: "Huyman KHUN", role: "Junior Graphic Designer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
+                { id: 26, name: "Chandaravuth YUN", role: "HR Executive", gender: "Male", dept: "HR", insurance: "Staff member" },
+                { id: 27, name: "Sambo CHHORN", role: "Database Specialist", gender: "Male", dept: "Database", insurance: "Staff member" },
+                { id: 28, name: "Viseu MOM", role: "Database Specialist", gender: "Male", dept: "Database", insurance: "Staff member" },
+                { id: 29, name: "Teppidour SROEUNG", role: "English- khmer Translator", gender: "Female", dept: "Translation", insurance: "Staff member" },
+                { id: 30, name: "Yokseang KHUN", role: "Project Manager", gender: "Female", dept: "Project", insurance: "Management" },
+                { id: 31, name: "Gechhong TANG", role: "English- khmer Translator", gender: "Female", dept: "Translation", insurance: "Staff member" },
+                { id: 32, name: "Dison TANN", role: "Junior Graphic Designer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
+                { id: 33, name: "Syphann LY", role: "Academic Coordinator", gender: "Male", dept: "Academic", insurance: "Staff member" },
+                { id: 34, name: "Rotha SENG", role: "Marketing Assistant", gender: "Female", dept: "Marketing", insurance: "Staff member" },
+                { id: 35, name: "Chandanin KIM", role: "Accountant & Procurement Officer", gender: "Female", dept: "Finance", insurance: "Staff member" },
+                { id: 36, name: "Sokhorn MITH", role: "Study Abroad Counsellor", gender: "Male", dept: "Student Placement", insurance: "Staff member" },
+                { id: 37, name: "Narita CHHORN", role: "Study Abroad Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+                { id: 38, name: "Sokmouy LING", role: "Study Abroad Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+                { id: 39, name: "Rapich TAN", role: "Marketing Intern", gender: "Male", dept: "Interns", insurance: "Staff member" },
+                { id: 40, name: "Kimleang MEAS", role: "Marketing Intern", gender: "Female", dept: "Interns", insurance: "Staff member" },
+                { id: 41, name: "Niblair TROUY", role: "Marketing Intern", gender: "Male", dept: "Interns", insurance: "Staff member" },
+                { id: 42, name: "Panharoth TAUCH", role: "Marketing Intern", gender: "Female", dept: "Interns", insurance: "Staff member" }
+                ];
+
+                return rawData.map(emp => {
+                const names = emp.name.split(' ');
+                const familyName = names.pop();
+                const givenName = names.join(' ');
+                const branchOffice = (emp.name === "Malish VANN" || emp.name === "Vothana CHHOEURY") 
+                    ? "Siem Reap Branch" : "Phnom Penh HQ";
+
+                return {
+                    id: `ELA${String(emp.id).padStart(3, '0')}`,
+                    name: emp.name, givenName, familyName, dept: emp.dept, role: emp.role,
+                    email: `${givenName.toLowerCase().replace(/\s+/g, '')}.${familyName.toLowerCase()}@ela.edu`,
+                    personalEmail: `${givenName.toLowerCase().replace(/\s+/g, '')}${emp.id}@gmail.com`,
+                    gender: emp.gender, dob: '1990-05-15', contactNumber: '+855 12 345 678',
+                    branchOffice: branchOffice, insurance: emp.insurance, joinDate: '2023-01-10', status: 'Active',
+                    profilePhoto: `https://randomuser.me/api/portraits/${emp.gender === 'Female' ? 'women' : 'men'}/${(emp.id % 90) + 1}.jpg`
+                };
+                });
+            });
+
+            const [orgData, setOrgData] = useState({
+                id: 'root',
+                dept: 'Executive Management',
+                managerName: 'Vantak CHHEANG',
+                assistantName: 'Sovannarith CHHEM',
+                staffNames: [],
+                children: [
+                {
+                    id: 'sp', dept: 'Student Placement', managerName: null, staffNames: [],
+                    children: [
+                    { id: 'sp_pp', dept: 'Phnom Penh City', managerName: 'Molika MENG', staffNames: ["Haingtek LAY", "Chanseyma KHIEV", "Panha VAT", "Meng kheang TANG", "Soknoeun SOEUN", "Annee CHOUR", "Sambo LIM", "Sokhorn MITH", "Narita CHHORN", "Sokmouy LING"], children: [
+                        { id: 'sp_tr', dept: 'Translation', managerName: 'Mane SAMBATH', staffNames: ["Nget KAO", "Teppidour SROEUNG", "Gechhong TANG"], children: [] },
+                        { id: 'sp_cs', dept: 'Client Service', managerName: 'Sovannara KONG', staffNames: [], children: [] }
+                    ] },
+                    { id: 'sp_sr', dept: 'Siem Reap City', managerName: 'Vothana CHHOEURY', staffNames: ["Malish VANN"], children: [] }
+                    ]
+                },
+                { id: 'hr', dept: 'Human Resources', managerName: 'Henghort TEAN', staffNames: ["Chandaravuth YUN"], children: [] },
+                { id: 'fin', dept: 'Finance', managerName: 'Molyrattana SOVATH', staffNames: ["Chandanin KIM"], children: [] },
+                { id: 'mkt', dept: 'Marketing', managerName: 'Leechuninn PHANG', staffNames: ["Soreach MEAS", "Deap SOCHYNA", "Seyha MAO", "Sunmean VA", "Huyman KHUN", "Dison TANN", "Rotha SENG", "Rapich TAN", "Kimleang MEAS", "Niblair TROUY", "Panharoth TAUCH"], children: [] },
+                { id: 'proj', dept: 'Project', managerName: 'Yokseang KHUN', staffNames: ["Somealea KHUN"], children: [] },
+                { id: 'acad', dept: 'Academic', managerName: 'Vutha ROS', staffNames: ["Syphann LY"], children: [] },
+                { id: 'it', dept: 'Information Technology', managerName: null, staffNames: ["Sambo CHHORN", "Viseu MOM"], children: [] }
+                ]
+            });
+
+            const [isEditingOrg, setIsEditingOrg] = useState(false);
+            const [editingOrgNode, setEditingOrgNode] = useState(null);
+            const [orgNodeForm, setOrgNodeForm] = useState({ id: '', dept: '', managerName: '', staffNames: [] });
+            const [selectedEmployeeProfile, setSelectedEmployeeProfile] = useState(null);
+            
+            // Photo Editing States
+            const [editingPhotoId, setEditingPhotoId] = useState(null);
+            const [tempPhotoUrl, setTempPhotoUrl] = useState('');
+
+            // Add Menu States
+            const [addMenuConfig, setAddMenuConfig] = useState(null); 
+            const [newEmployeeForm, setNewEmployeeForm] = useState(null); 
+
+            // Modal States
+            const [confirmDialog, setConfirmDialog] = useState(null);
+            const [alertDialog, setAlertDialog] = useState(null);
+
+            const [orgZoomLevel, setOrgZoomLevel] = useState(0.85);
+            const [orgPan, setOrgPan] = useState({ x: 0, y: 0 });
+            const [isDraggingOrg, setIsDraggingOrg] = useState(false);
+            const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+            const [activeOrgTab, setActiveOrgTab] = useState('Overall Structure');
+            const orgTabs = useMemo(() => ['Overall Structure', ...orgData.children.map(c => c.dept)], [orgData]);
+
+            const updateNode = (tree, id, data) => {
+                if (tree.id === id) return { ...tree, ...data };
+                if (tree.children) return { ...tree, children: tree.children.map(c => updateNode(c, id, data)) };
+                return tree;
+            };
+            
+            const addNode = (tree, parentId, newNode) => {
+                if (tree.id === parentId) return { ...tree, children: [...(tree.children || []), newNode] };
+                if (tree.children) return { ...tree, children: tree.children.map(c => addNode(c, parentId, newNode)) };
+                return tree;
+            };
+            
+            const deleteNode = (tree, id) => {
+                if (tree.children) return { ...tree, children: tree.children.filter(c => c.id !== id).map(c => deleteNode(c, id)) };
+                return tree;
+            };
+
+            const getEmployeesInBranch = (node) => {
+                let names = [node.managerName, ...(node.staffNames || [])].filter(Boolean);
+                if (node.children) {
+                node.children.forEach(c => { names = names.concat(getEmployeesInBranch(c)); });
+                }
+                return names;
+            };
+
+            const getOrgTabStats = (tabName, specificBranch = null) => {
+                let emps = allEmployeesList;
+                if (tabName !== 'Overall Structure') {
+                const branch = orgData.children.find(c => c.dept === tabName);
+                if (branch) {
+                    const namesInBranch = getEmployeesInBranch(branch);
+                    emps = emps.filter(e => namesInBranch.includes(e.name));
+                }
+                }
+                if (specificBranch) {
+                emps = emps.filter(e => e.branchOffice === specificBranch);
+                }
+                return {
+                total: emps.length,
+                male: emps.filter(e => e.gender === 'Male').length,
+                female: emps.filter(e => e.gender === 'Female').length
+                };
+            };
+
+            const handleExport = async (format) => {
+                setAlertDialog(`Preparing ${format.toUpperCase()} export... Please wait.`);
+                try {
+                if (!window.html2canvas) {
+                    await new Promise((resolve) => {
+                    const script = document.createElement('script');
+                    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+                    script.onload = resolve;
+                    document.head.appendChild(script);
+                    });
+                }
+                
+                const element = document.getElementById('org-chart-export-area');
+                if (!element) throw new Error("Chart element not found");
+                
+                const canvas = await window.html2canvas(element, {
+                    backgroundColor: '#f4f7fa', // Light background
+                    scale: 2, // High quality scale
+                    useCORS: true,
+                    logging: false
+                });
+
+                if (format === 'png') {
+                    const link = document.createElement('a');
+                    link.download = 'ELA_Org_Chart.png';
+                    link.href = canvas.toDataURL('image/png');
+                    link.click();
+                    setAlertDialog(null);
+                } else if (format === 'pdf') {
+                    if (!window.jspdf) {
+                    await new Promise((resolve) => {
+                        const script = document.createElement('script');
+                        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+                        script.onload = resolve;
+                        document.head.appendChild(script);
+                    });
+                    }
+                    const { jsPDF } = window.jspdf;
+                    const pdf = new jsPDF({
+                    orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+                    unit: 'px',
+                    format: [canvas.width, canvas.height]
+                    });
+                    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+                    pdf.save('ELA_Org_Chart.pdf');
+                    setAlertDialog(null);
+                }
+                } catch (error) {
+                console.error('Export failed:', error);
+                setAlertDialog('Export failed. Please try again or check console for details.');
+                }
+            };
+
+            const getEmp = (name) => allEmployeesList.find(e => e.name === name) || { name, role: 'Unknown', profilePhoto: `https://i.pravatar.cc/150?u=${encodeURIComponent(name)}` };
+            const getStaff = (names) => names.map(getEmp);
+
+            const rootManager = getEmp(orgData.managerName);
+            const rootAssistant = getEmp(orgData.assistantName);
+
+            const handleSavePhoto = (empId) => {
+                setAllEmployeesList(prev => prev.map(emp => emp.id === empId ? { ...emp, profilePhoto: tempPhotoUrl } : emp));
+                setSelectedEmployeeProfile(prev => ({ ...prev, profilePhoto: tempPhotoUrl }));
+                setEditingPhotoId(null);
+            };
+
+            const handleAddNewEmployee = () => {
+                if (!newEmployeeForm.name || !newEmployeeForm.role) {
+                setAlertDialog("Name and Role are required.");
+                return;
+                }
+
+                const newId = `ELA${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
+                const newEmp = {
+                id: newId,
+                name: newEmployeeForm.name,
+                role: newEmployeeForm.role,
+                gender: newEmployeeForm.gender || 'Other',
+                dept: 'Assigned',
+                email: `${newEmployeeForm.name.toLowerCase().replace(/\s+/g, '')}@ela.edu`,
+                contactNumber: 'TBD',
+                branchOffice: 'HQ',
+                insurance: 'Staff member',
+                joinDate: new Date().toISOString().split('T')[0],
+                profilePhoto: `https://randomuser.me/api/portraits/${newEmployeeForm.gender === 'Female' ? 'women' : 'men'}/${Math.floor(Math.random() * 90) + 1}.jpg`
+                };
+
+                // Add to global list
+                setAllEmployeesList(prev => [...prev, newEmp]);
+
+                // Add to specific department
+                setOrgData(prev => {
+                const appendStaff = (tree) => {
+                    if (tree.id === newEmployeeForm.parentId) {
+                    return { ...tree, staffNames: [...(tree.staffNames || []), newEmp.name] };
+                    }
+                    if (tree.children) {
+                    return { ...tree, children: tree.children.map(appendStaff) };
+                    }
+                    return tree;
+                };
+                return appendStaff(prev);
+                });
+
+                setNewEmployeeForm(null);
+                setAlertDialog(`${newEmp.name} successfully added to the organization.`);
+            };
+
+            const renderOrgTree = (node, level = 1) => {
+                const manager = node.managerName ? getEmp(node.managerName) : null;
+                const staff = getStaff(node.staffNames || []);
+                
+                return (
+                <ModernOrgNode 
+                    key={node.id} 
+                    dept={node.dept} 
+                    manager={manager} 
+                    staffList={staff} 
+                    onEmployeeClick={(emp) => {
+                    setSelectedEmployeeProfile(emp);
+                    setEditingPhotoId(null);
+                    }}
+                    isEditing={isEditingOrg}
+                    isRoot={false}
+                    onEdit={() => { 
+                    setEditingOrgNode(node.id); 
+                    setOrgNodeForm({ id: node.id, dept: node.dept, managerName: node.managerName || '', staffNames: node.staffNames || [] }); 
+                    }}
+                    onAddMenu={() => {
+                    setAddMenuConfig({ parentId: node.id, deptName: node.dept });
+                    }}
+                    onDelete={() => {
+                    setConfirmDialog({
+                        message: `Are you sure you want to delete ${node.dept} and all its sub-departments?`,
+                        onConfirm: () => {
+                        setOrgData(prev => deleteNode(prev, node.id));
+                        setConfirmDialog(null);
+                        }
+                    });
+                    }}
+                >
+                    {node.children && node.children.length > 0 && node.children.map(child => renderOrgTree(child, level + 1))}
+                </ModernOrgNode>
+                );
+            };
+
+            return (
+                <div className="flex flex-col h-screen bg-[#f4f7fa] font-sans relative">
+                <header className="h-16 bg-white shadow-sm flex items-center justify-between px-6 z-20 flex-shrink-0 relative">
+                    <div className="flex items-center">
+                    <div className="w-10 h-10 bg-gradient-to-br from-[#4a3189] to-[#6d48c7] rounded-md flex items-center justify-center mr-3 shadow-md">
+                        <span className="text-white font-black text-sm tracking-widest">ELA</span>
+                    </div>
+                    <h1 className="text-xl font-extrabold text-gray-800 tracking-tight">Interactive <span className="text-[#dfa634]">Org Chart</span></h1>
+                    </div>
+                    <div className="flex items-center space-x-6">
+                    <div className="flex items-center space-x-2 bg-gray-50 px-3 py-1.5 rounded-full border border-gray-100 shadow-inner">
+                        <div className="w-8 h-8 rounded-full bg-[#dfa634] text-white flex items-center justify-center font-bold text-xs shadow-sm ring-2 ring-white">HR</div>
+                        <span className="text-sm font-bold text-gray-700">System Admin</span>
+                    </div>
+                    </div>
+                </header>
+
+                <main className="flex-1 flex flex-col overflow-hidden p-6 max-w-[1600px] mx-auto w-full">
+                    
+                    <div className="flex flex-col bg-white p-4 rounded-2xl shadow-sm border border-gray-100/80 space-y-4 z-10 relative">
+                    <div className="flex items-center justify-between">
+                        <div>
+                        <h2 className="text-xl font-bold text-gray-800 flex items-center">
+                            <Network className="w-5 h-5 mr-2 text-[#dfa634]" /> ELA Company Structure
+                        </h2>
+                        <p className="text-gray-500 mt-1 text-sm font-medium">Pan, zoom, filter, and edit the living organizational hierarchy.</p>
+                        </div>
+                        
+                        <div className="flex items-center space-x-3">
+                        <div className="flex items-center space-x-1 bg-gray-50 rounded-xl p-1 border border-gray-200 shadow-inner">
+                            <button onClick={() => setOrgZoomLevel(z => Math.max(z - 0.1, 0.3))} className="p-2 bg-white shadow-sm rounded-lg text-gray-600 hover:text-[#4a3189] hover:bg-purple-50 transition" title="Zoom Out"><Minus className="w-4 h-4" /></button>
+                            <button onClick={() => { setOrgZoomLevel(0.85); setOrgPan({ x: 0, y: 0 }); }} className="px-3 py-2 text-xs font-bold text-gray-700 hover:text-[#4a3189] transition w-16 text-center" title="Reset">{Math.round(orgZoomLevel * 100)}%</button>
+                            <button onClick={() => setOrgZoomLevel(z => Math.min(z + 0.1, 2.5))} className="p-2 bg-white shadow-sm rounded-lg text-gray-600 hover:text-[#4a3189] hover:bg-purple-50 transition" title="Zoom In"><Plus className="w-4 h-4" /></button>
+                        </div>
+                        
+                        <button 
+                            onClick={() => setIsEditingOrg(!isEditingOrg)} 
+                            className={`px-5 py-2.5 shadow-sm border rounded-xl text-sm font-bold flex items-center transition-all ${isEditingOrg ? 'bg-[#4a3189] text-white border-[#4a3189] hover:bg-[#38236b] shadow-purple-900/20' : 'bg-white border-gray-200 text-gray-700 hover:border-[#dfa634]/50 hover:bg-yellow-50/50 hover:shadow-md'}`}
+                        >
+                            {isEditingOrg ? <><Save className="w-4 h-4 mr-2" /> Done Editing</> : <><Edit className="w-4 h-4 mr-2" /> Edit Structure</>}
+                        </button>
+                        
+                        <div className="relative group">
+                            <button className="px-5 py-2.5 bg-gradient-to-r from-[#dfa634] to-[#f5c76a] text-white shadow-lg shadow-yellow-600/20 rounded-xl text-sm font-bold flex items-center transition hover:scale-105">
+                            <Download className="w-4 h-4 mr-2" /> Export
+                            </button>
+                            <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-2xl py-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all transform origin-top-right z-50">
+                            <button onClick={() => handleExport('png')} className="block w-full text-left px-5 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">Export as PNG</button>
+                            <button onClick={() => handleExport('pdf')} className="block w-full text-left px-5 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">Export as PDF</button>
+                            </div>
+                        </div>
+                        </div>
+                    </div>
+
+                    <div className="flex space-x-4 overflow-x-auto pb-6 pt-3 px-2 custom-scrollbar">
+                        {orgTabs.map(tab => {
+                        const stat = getOrgTabStats(tab);
+                        const isActive = activeOrgTab === tab;
+                        const isOverall = tab === 'Overall Structure';
+                        return (
+                            <div 
+                            key={tab}
+                            onClick={() => { setActiveOrgTab(tab); setOrgPan({ x: 0, y: 0 }); setOrgZoomLevel(0.85); }}
+                            className={`flex-shrink-0 cursor-pointer px-5 py-4 w-[250px] rounded-2xl transition-all duration-300 border relative overflow-hidden ${
+                                isActive 
+                                ? 'bg-[#292c44] text-white shadow-xl shadow-[#292c44]/30 scale-[1.02] border-transparent z-10' 
+                                : 'bg-white text-gray-600 hover:border-[#dfa634]/50 hover:shadow-lg border-gray-200'
+                            }`}
+                            >
+                            {isActive && <div className="absolute -right-6 -top-6 w-24 h-24 bg-[#dfa634]/20 rounded-full blur-2xl"></div>}
+                            
+                            <div className="relative z-10">
+                                <div className="flex items-center space-x-3 mb-3">
+                                <div className={`p-2 rounded-lg ${isActive ? 'bg-white/10' : 'bg-purple-50'}`}>
+                                    {isOverall ? <Network className={`w-5 h-5 ${isActive ? 'text-[#dfa634]' : 'text-[#4a3189]'}`} /> : <Briefcase className={`w-5 h-5 ${isActive ? 'text-[#dfa634]' : 'text-[#4a3189]'}`} />}
+                                </div>
+                                <h4 className={`text-sm font-black truncate ${isActive ? 'text-white' : 'text-gray-800'}`}>{tab}</h4>
+                                </div>
+
+                                {tab === 'Student Placement' ? (
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-center text-[10px]">
+                                        <span className={`font-bold ${isActive ? 'text-gray-300' : 'text-[#4a3189]'}`}>Phnom Penh</span>
+                                        <span className={isActive ? 'text-white/90' : 'text-gray-500'}>
+                                        <strong className={`text-[12px] ${isActive ? 'text-white' : 'text-gray-800'}`}>{getOrgTabStats(tab, 'Phnom Penh HQ').total}</strong> <span className="opacity-75">(M:{getOrgTabStats(tab, 'Phnom Penh HQ').male} F:{getOrgTabStats(tab, 'Phnom Penh HQ').female})</span>
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-[10px]">
+                                        <span className={`font-bold ${isActive ? 'text-gray-300' : 'text-[#4a3189]'}`}>Siem Reap</span>
+                                        <span className={isActive ? 'text-white/90' : 'text-gray-500'}>
+                                        <strong className={`text-[12px] ${isActive ? 'text-white' : 'text-gray-800'}`}>{getOrgTabStats(tab, 'Siem Reap Branch').total}</strong> <span className="opacity-75">(M:{getOrgTabStats(tab, 'Siem Reap Branch').male} F:{getOrgTabStats(tab, 'Siem Reap Branch').female})</span>
+                                        </span>
+                                    </div>
+                                </div>
+                                ) : (
+                                <div className="flex items-center justify-between text-[11px] mt-1 pt-3 border-t border-gray-100/20">
+                                    <span className={isActive ? 'text-white/80' : 'text-gray-500'}>Total Staff: <strong className={`text-sm ml-1 ${isActive ? 'text-white' : 'text-[#4a3189]'}`}>{stat.total}</strong></span>
+                                    <div className={`flex items-center space-x-2 px-2 py-0.5 rounded ${isActive ? 'bg-white/10' : 'bg-gray-50'}`}>
+                                    <span className={isActive ? 'text-blue-200' : 'text-blue-600'} title="Male"><User className="w-3 h-3 inline mr-0.5"/>{stat.male}</span>
+                                    <span className={isActive ? 'text-pink-200' : 'text-pink-600'} title="Female"><User className="w-3 h-3 inline mr-0.5"/>{stat.female}</span>
+                                    </div>
+                                </div>
+                                )}
+                            </div>
+                            </div>
+                        )
+                        })}
+                    </div>
+                    </div>
+                    
+                    {}
+                    <div 
+                    className={`flex-1 mt-6 relative bg-white rounded-3xl shadow-inner overflow-hidden border border-gray-200/60 flex items-start pt-16 ${isDraggingOrg ? 'cursor-grabbing' : 'cursor-grab'}`}
+                    onWheel={(e) => {
+                        const delta = e.deltaY > 0 ? -0.05 : 0.05;
+                        setOrgZoomLevel(z => Math.min(Math.max(0.3, z + delta), 2.5));
+                    }}
+                    onMouseDown={(e) => {
+                        setIsDraggingOrg(true);
+                        setDragStart({ x: e.clientX - orgPan.x, y: e.clientY - orgPan.y });
+                    }}
+                    onMouseMove={(e) => {
+                        if (!isDraggingOrg) return;
+                        setOrgPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
+                    }}
+                    onMouseUp={() => setIsDraggingOrg(false)}
+                    onMouseLeave={() => setIsDraggingOrg(false)}
+                    >
+                    <div className="absolute inset-0" style={{ backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)', backgroundSize: '40px 40px', opacity: 0.3, pointerEvents: 'none' }}></div>
+                    
+                    <style>{`
+                        .modern-tree ul { padding-top: 30px; position: relative; display: flex; justify-content: center; }
+                        .modern-tree li { flex: 1; float: left; text-align: center; list-style-type: none; position: relative; padding: 30px 10px 0 10px; transition: all 0.3s; display: flex; flex-direction: column; align-items: center; }
+                        .modern-tree li::before, .modern-tree li::after { content: ''; position: absolute; top: 0; right: 50%; border-top: 3px solid #e2d8f0; width: 50%; height: 30px; z-index: 0; }
+                        .modern-tree li::after { right: auto; left: 50%; border-left: 3px solid #e2d8f0; }
+                        .modern-tree li:only-child::after, .modern-tree li:only-child::before { display: none; }
+                        .modern-tree li:only-child { padding-top: 0; }
+                        .modern-tree li:first-child::before, .modern-tree li:last-child::after { border: 0 none; }
+                        .modern-tree li:last-child::before { border-right: 3px solid #e2d8f0; border-radius: 0 16px 0 0; }
+                        .modern-tree li:first-child::after { border-radius: 16px 0 0 0; }
+                        .modern-tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; border-left: 3px solid #e2d8f0; width: 0; height: 30px; transform: translateX(-50%); z-index: 0; }
+                        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+                        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+                        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+                        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+                        .no-select { user-select: none; -webkit-user-select: none; }
+                    `}</style>
+                    
+                    <div 
+                        className="min-w-max w-full px-10 pb-[500px] flex justify-center origin-top no-select z-10"
+                        style={{ 
+                        transform: `translate(${orgPan.x}px, ${orgPan.y}px) scale(${orgZoomLevel})`,
+                        transition: isDraggingOrg ? 'none' : 'transform 0.1s ease-out'
+                        }}
+                    >
+                        <div className="modern-tree inline-block" id="org-chart-export-area">
+                        <ul>
+                            {activeOrgTab === 'Overall Structure' ? (
+                            <li>
+                                <div className="flex flex-col items-center">
+                                <div className="z-10 relative group cursor-pointer hover:-translate-y-1 transition-transform duration-300 mx-auto w-72" onClick={() => { setSelectedEmployeeProfile(rootManager); setEditingPhotoId(null); }}>
+                                    {isEditingOrg && (
+                                    <div className="absolute -top-4 -right-4 flex space-x-1 z-30">
+                                        <button onClick={(e) => { e.stopPropagation(); setEditingOrgNode(orgData.id); setOrgNodeForm({ id: orgData.id, dept: orgData.dept, managerName: orgData.managerName || '', staffNames: orgData.staffNames || [], assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Department"><Edit className="w-3 h-3" /></button>
+                                        <button onClick={(e) => { e.stopPropagation(); setAddMenuConfig({ parentId: orgData.id, deptName: orgData.dept }); }} className="bg-green-500 text-white p-2 rounded-full shadow-lg hover:bg-green-600 transition" title="Add"><Plus className="w-3 h-3" /></button>
+                                    </div>
+                                    )}
+                                    <div className="absolute -top-4 left-1/2 transform -translate-x-1/2 z-20 w-max">
+                                    <div className="bg-[#292c44] text-white font-bold text-[10px] uppercase tracking-widest px-5 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30">
+                                        {orgData.dept}
+                                    </div>
+                                    </div>
+                                    <div className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl pt-10 pb-5 px-6 w-72 flex items-center flex-col relative group-hover:shadow-2xl transition-all">
+                                    <div className="relative mb-3">
+                                        <div className="absolute inset-0 bg-[#dfa634] rounded-full blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
+                                        <img src={rootManager.profilePhoto} className="relative w-16 h-16 rounded-full object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootManager.name} />
+                                    </div>
+                                    <p className="text-sm font-extrabold text-gray-800 hover:text-[#4a3189] transition-colors">{rootManager.name}</p>
+                                    <p className="text-[10px] font-bold text-[#dfa634] uppercase tracking-wider mt-1">{rootManager.role}</p>
+                                    </div>
+                                </div>
+
+                                <div className="relative flex justify-center w-full h-24">
+                                    <div className="w-[3px] h-full bg-[#e2d8f0]"></div>
+                                    <div className="absolute top-1/2 right-1/2 flex items-center pr-0 transform -translate-y-1/2">
+                                        <div 
+                                        onClick={() => { setSelectedEmployeeProfile(rootAssistant); setEditingPhotoId(null); }}
+                                        className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-full p-2 w-56 flex items-center z-10 relative group hover:shadow-2xl hover:-translate-y-0.5 transition-all cursor-pointer"
+                                        >
+                                        <img src={rootAssistant.profilePhoto} className="w-10 h-10 rounded-full mr-3 object-cover shadow-sm ring-2 ring-white border border-gray-100" alt={rootAssistant.name} />
+                                        <div className="text-left overflow-hidden">
+                                            <p className="text-[10px] font-extrabold text-gray-800 truncate group-hover:text-[#4a3189] transition-colors">{rootAssistant.name}</p>
+                                            <p className="text-[8px] font-bold text-[#4a3189] truncate mt-0.5">{rootAssistant.role}</p>
+                                        </div>
+                                        </div>
+                                        <div className="w-8 h-[3px] bg-[#e2d8f0]"></div>
+                                    </div>
+                                </div>
+                                </div>
+
+                                <ul>
+                                {orgData.children.map(child => renderOrgTree(child, 1))}
+                                </ul>
+                            </li>
+                            ) : (() => {
+                                const branch = orgData.children.find(c => c.dept === activeOrgTab);
+                                if (branch) return renderOrgTree(branch, 1);
+                                return null;
+                            })()}
+                        </ul>
+                        </div>
+                    </div>
+                    </div>
+                </main>
+
+                {}
+                {selectedEmployeeProfile && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col relative transform transition-all">
+                        <button onClick={() => { setSelectedEmployeeProfile(null); setEditingPhotoId(null); }} className="absolute top-4 right-4 text-white hover:text-gray-200 hover:bg-black/20 p-2 rounded-full transition z-20"><X className="w-6 h-6" /></button>
+                        
+                        <div className="flex items-start p-8 bg-gradient-to-br from-[#292c44] to-[#4a3189] relative overflow-hidden">
+                        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 mix-blend-overlay"></div>
+                        
+                        <div className="relative z-10 mr-8 flex-shrink-0 flex flex-col items-center">
+                            <img src={selectedEmployeeProfile.profilePhoto} className="w-48 h-48 rounded-2xl object-cover shadow-2xl ring-4 ring-white/20 bg-white/10" alt={selectedEmployeeProfile.name} />
+                            
+                            {editingPhotoId === selectedEmployeeProfile.id ? (
+                            <div className="mt-4 w-48 flex flex-col gap-2 bg-white/10 p-3 rounded-xl backdrop-blur-md border border-white/20">
+                                <input 
+                                type="text" 
+                                value={tempPhotoUrl} 
+                                onChange={e => setTempPhotoUrl(e.target.value)} 
+                                placeholder="Paste new image URL..." 
+                                className="w-full p-2 text-xs rounded-lg text-gray-800 outline-none focus:ring-2 focus:ring-[#dfa634]"
+                                />
+                                <div className="flex gap-2">
+                                <button onClick={() => handleSavePhoto(selectedEmployeeProfile.id)} className="flex-1 bg-[#dfa634] hover:bg-[#e6b34d] text-white text-xs font-bold py-2 rounded-lg transition shadow-md">Save</button>
+                                <button onClick={() => setEditingPhotoId(null)} className="flex-1 bg-white/20 hover:bg-white/30 text-white text-xs font-bold py-2 rounded-lg transition shadow-sm">Cancel</button>
+                                </div>
+                            </div>
+                            ) : (
+                            <button 
+                                onClick={() => { setEditingPhotoId(selectedEmployeeProfile.id); setTempPhotoUrl(selectedEmployeeProfile.profilePhoto); }} 
+                                className="mt-4 px-5 py-2 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-bold rounded-xl transition shadow-lg backdrop-blur-md flex items-center justify-center w-full"
+                            >
+                                <Camera className="w-3 h-3 mr-2" /> Change Photo
+                            </button>
+                            )}
+                        </div>
+
+                        <div className="z-10 flex flex-col justify-center min-h-[12rem] flex-1">
+                            <h2 className="text-3xl font-black text-white">{selectedEmployeeProfile.name}</h2>
+                            <p className="text-[#dfa634] font-bold tracking-widest uppercase text-sm mt-2">{selectedEmployeeProfile.role}</p>
+                            <div className="mt-6 flex flex-col gap-3 text-white/90 text-sm">
+                            <span className="flex items-center"><Building className="w-4 h-4 mr-3 opacity-70"/> {selectedEmployeeProfile.dept}</span>
+                            <span className="flex items-center"><Mail className="w-4 h-4 mr-3 opacity-70"/> {selectedEmployeeProfile.email}</span>
+                            </div>
+                        </div>
+                        </div>
+                        
+                        <div className="p-8 space-y-6 bg-gray-50/50">
+                        <div className="grid grid-cols-2 gap-y-6 gap-x-8">
+                            <div>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 flex items-center"><Building className="w-3 h-3 mr-1" /> Branch Office</p>
+                            <p className="text-sm font-bold text-gray-800">{selectedEmployeeProfile.branchOffice}</p>
+                            </div>
+                            <div>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 flex items-center"><Phone className="w-3 h-3 mr-1" /> Contact Number</p>
+                            <p className="text-sm font-medium text-gray-800">{selectedEmployeeProfile.contactNumber}</p>
+                            </div>
+                            <div>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 flex items-center"><User className="w-3 h-3 mr-1" /> Status / Type</p>
+                            <p className="text-sm font-medium text-gray-800">{selectedEmployeeProfile.insurance}</p>
+                            </div>
+                            <div>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 flex items-center"><Calendar className="w-3 h-3 mr-1" /> Join Date</p>
+                            <p className="text-sm font-medium text-gray-800">{selectedEmployeeProfile.joinDate}</p>
+                            </div>
+                        </div>
+                        </div>
+                        
+                        <div className="p-6 bg-white border-t border-gray-100 flex justify-between rounded-b-3xl space-x-4">
+                        <button 
+                            onClick={() => {
+                            setConfirmDialog({
+                                message: `Are you sure you want to permanently delete ${selectedEmployeeProfile.name}? This will remove them from all departments.`,
+                                onConfirm: () => {
+                                setAllEmployeesList(prev => prev.filter(e => e.id !== selectedEmployeeProfile.id));
+                                const removeEmp = (tree) => {
+                                    let updated = { ...tree };
+                                    if (updated.managerName === selectedEmployeeProfile.name) updated.managerName = null;
+                                    if (updated.assistantName === selectedEmployeeProfile.name) updated.assistantName = null;
+                                    if (updated.staffNames) updated.staffNames = updated.staffNames.filter(n => n !== selectedEmployeeProfile.name);
+                                    if (updated.children) updated.children = updated.children.map(removeEmp);
+                                    return updated;
+                                };
+                                setOrgData(prev => removeEmp(prev));
+                                setSelectedEmployeeProfile(null);
+                                setConfirmDialog(null);
+                                }
+                            });
+                            }}
+                            className="px-6 py-3 bg-red-50 text-red-600 border border-red-200 rounded-xl text-sm font-bold hover:bg-red-100 transition shadow-sm flex items-center"
+                        >
+                            <Trash2 className="w-4 h-4 mr-2" /> Delete Employee
+                        </button>
+                        <button 
+                            onClick={() => { setSelectedEmployeeProfile(null); setEditingPhotoId(null); }}
+                            className="px-8 py-3 bg-gray-100 border border-gray-200 text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-200 hover:text-gray-900 transition shadow-sm flex-1"
+                        >
+                            Close Profile
+                        </button>
+                        </div>
+                    </div>
+                    </div>
+                )}
+
+                {addMenuConfig && (
+                    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col relative transform transition-all">
+                        <button onClick={() => setAddMenuConfig(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-800 hover:bg-gray-100 p-2 rounded-full transition z-10"><X className="w-5 h-5" /></button>
+                        <div className="p-6 pt-8 border-b border-gray-100 bg-gray-50 text-center">
+                        <h3 className="text-xl font-black text-gray-800">Add to Department</h3>
+                        <p className="text-sm font-bold text-[#dfa634] mt-1">{addMenuConfig.deptName}</p>
+                        </div>
+                        <div className="p-6 space-y-4">
+                        <button 
+                            onClick={() => {
+                            setEditingOrgNode('new_' + addMenuConfig.parentId); 
+                            setOrgNodeForm({ id: `node_${Date.now()}`, dept: 'New Sub-Department', managerName: '', staffNames: [] });
+                            setAddMenuConfig(null);
+                            }}
+                            className="w-full flex items-center p-4 bg-white border-2 border-gray-100 rounded-xl hover:border-[#4a3189] hover:bg-purple-50 hover:shadow-md transition group"
+                        >
+                            <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center text-[#4a3189] group-hover:scale-110 transition mr-4">
+                            <Network className="w-6 h-6" />
+                            </div>
+                            <div className="text-left">
+                            <h4 className="font-bold text-gray-800 group-hover:text-[#4a3189]">New Sub-Department</h4>
+                            <p className="text-xs text-gray-500 mt-0.5">Create a branching division.</p>
+                            </div>
+                        </button>
+                        
+                        <button 
+                            onClick={() => {
+                            setNewEmployeeForm({ parentId: addMenuConfig.parentId, name: '', role: '', gender: 'Male' });
+                            setAddMenuConfig(null);
+                            }}
+                            className="w-full flex items-center p-4 bg-white border-2 border-gray-100 rounded-xl hover:border-[#dfa634] hover:bg-yellow-50 hover:shadow-md transition group"
+                        >
+                            <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center text-[#dfa634] group-hover:scale-110 transition mr-4">
+                            <UserPlus className="w-6 h-6" />
+                            </div>
+                            <div className="text-left">
+                            <h4 className="font-bold text-gray-800 group-hover:text-[#dfa634]">New Team Member</h4>
+                            <p className="text-xs text-gray-500 mt-0.5">Add staff directly here.</p>
+                            </div>
+                        </button>
+                        </div>
+                    </div>
+                    </div>
+                )}
+
+                {newEmployeeForm && (
+                    <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
+                        <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gradient-to-r from-[#dfa634] to-[#f5c76a] text-white">
+                        <h3 className="text-lg font-bold flex items-center"><UserPlus className="w-5 h-5 mr-2" /> Add New Team Member</h3>
+                        <button onClick={() => setNewEmployeeForm(null)} className="text-white/80 hover:text-white transition"><X className="w-5 h-5" /></button>
+                        </div>
+                        
+                        <div className="p-6 space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Full Name</label>
+                            <input 
+                            type="text" 
+                            className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#dfa634]/50 focus:border-[#dfa634] outline-none shadow-sm transition"
+                            value={newEmployeeForm.name}
+                            onChange={(e) => setNewEmployeeForm({...newEmployeeForm, name: e.target.value})}
+                            placeholder="e.g. John Doe"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Job Title / Role</label>
+                            <input 
+                            type="text" 
+                            className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#dfa634]/50 focus:border-[#dfa634] outline-none shadow-sm transition"
+                            value={newEmployeeForm.role}
+                            onChange={(e) => setNewEmployeeForm({...newEmployeeForm, role: e.target.value})}
+                            placeholder="e.g. Marketing Assistant"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Gender (For Auto-Avatar)</label>
+                            <select 
+                            className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#dfa634]/50 focus:border-[#dfa634] outline-none shadow-sm transition bg-white"
+                            value={newEmployeeForm.gender}
+                            onChange={(e) => setNewEmployeeForm({...newEmployeeForm, gender: e.target.value})}
+                            >
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                            </select>
+                        </div>
+                        </div>
+                        
+                        <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end space-x-3">
+                        <button onClick={() => setNewEmployeeForm(null)} className="px-5 py-2.5 text-sm font-bold text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-xl transition">Cancel</button>
+                        <button 
+                            onClick={handleAddNewEmployee}
+                            className="px-6 py-2.5 text-white text-sm font-bold rounded-xl transition bg-[#dfa634] hover:bg-[#c9942a] shadow-md hover:shadow-lg"
+                        >
+                            Create Employee
+                        </button>
+                        </div>
+                    </div>
+                    </div>
+                )}
+
+                {editingOrgNode && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+                        <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gradient-to-r from-[#292c44] to-[#3a3e5c] text-white flex-shrink-0">
+                        <h3 className="text-lg font-bold flex items-center">
+                            <Network className="w-5 h-5 mr-2 text-[#dfa634]" /> 
+                            {editingOrgNode.startsWith('new_') ? 'Add New Department' : 'Edit Department'}
+                        </h3>
+                        <button onClick={() => setEditingOrgNode(null)} className="text-white/60 hover:text-white transition"><X className="w-5 h-5" /></button>
+                        </div>
+                        
+                        <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6 bg-gray-50/30">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Department Name</label>
+                            <input 
+                            type="text" 
+                            className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none shadow-sm transition"
+                            value={orgNodeForm.dept}
+                            onChange={(e) => setOrgNodeForm({...orgNodeForm, dept: e.target.value})}
+                            />
+                        </div>
+                        
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Department Manager</label>
+                            <select 
+                            className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none shadow-sm transition bg-white"
+                            value={orgNodeForm.managerName}
+                            onChange={(e) => setOrgNodeForm({...orgNodeForm, managerName: e.target.value})}
+                            >
+                            <option value="">-- No Manager --</option>
+                            {allEmployeesList.map(emp => (
+                                <option key={emp.id} value={emp.name}>{emp.name} ({emp.role})</option>
+                            ))}
+                            </select>
+                        </div>
+
+                        {orgNodeForm.id === 'root' && (
+                            <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Executive Assistant</label>
+                            <select 
+                                className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none shadow-sm transition bg-white"
+                                value={orgNodeForm.assistantName || ''}
+                                onChange={(e) => setOrgNodeForm({...orgNodeForm, assistantName: e.target.value})}
+                            >
+                                <option value="">-- No Assistant --</option>
+                                {allEmployeesList.map(emp => (
+                                <option key={emp.id} value={emp.name}>{emp.name} ({emp.role})</option>
+                                ))}
+                            </select>
+                            </div>
+                        )}
+
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 pb-2 border-b border-gray-200">Assign Staff Members</label>
+                            <div className="bg-white border border-gray-200 rounded-xl p-2 h-64 overflow-y-auto custom-scrollbar shadow-inner">
+                            {allEmployeesList.map(emp => {
+                                if (emp.name === orgNodeForm.managerName || emp.name === orgNodeForm.assistantName) return null;
+                                
+                                const isSelected = orgNodeForm.staffNames.includes(emp.name);
+                                return (
+                                <label key={emp.id} className={`flex items-center space-x-3 p-2.5 rounded-lg border cursor-pointer transition mb-1 ${isSelected ? 'bg-purple-50/50 border-[#4a3189]/30' : 'border-transparent hover:bg-gray-50'}`}>
+                                    <input 
+                                    type="checkbox" 
+                                    className="w-4 h-4 text-[#4a3189] rounded border-gray-300 focus:ring-[#4a3189] cursor-pointer"
+                                    checked={isSelected}
+                                    onChange={(e) => {
+                                        if (e.target.checked) {
+                                        setOrgNodeForm({...orgNodeForm, staffNames: [...orgNodeForm.staffNames, emp.name]});
+                                        } else {
+                                        setOrgNodeForm({...orgNodeForm, staffNames: orgNodeForm.staffNames.filter(name => name !== emp.name)});
+                                        }
+                                    }}
+                                    />
+                                    <img src={emp.profilePhoto} className="w-8 h-8 rounded-full object-cover border border-gray-100" alt="" />
+                                    <div className="flex-1 overflow-hidden">
+                                    <p className="text-xs font-bold text-gray-800 truncate leading-tight">{emp.name}</p>
+                                    <p className="text-[10px] text-gray-500 truncate leading-tight mt-0.5">{emp.role} • {emp.dept}</p>
+                                    </div>
+                                </label>
+                                );
+                            })}
+                            </div>
+                            <div className="text-right mt-2 text-xs text-gray-500">
+                            <strong className="text-[#4a3189]">{orgNodeForm.staffNames.length}</strong> staff selected
+                            </div>
+                        </div>
+                        </div>
+                        
+                        <div className="p-5 border-t border-gray-100 bg-white flex justify-end space-x-3 flex-shrink-0">
+                        <button onClick={() => setEditingOrgNode(null)} className="px-5 py-2.5 text-sm font-bold text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition">Cancel</button>
+                        <button 
+                            disabled={!orgNodeForm.dept}
+                            onClick={() => {
+                            if (editingOrgNode.startsWith('new_')) {
+                                const parentId = editingOrgNode.replace('new_', '');
+                                setOrgData(prev => addNode(prev, parentId, orgNodeForm));
+                            } else {
+                                setOrgData(prev => updateNode(prev, editingOrgNode, orgNodeForm));
+                            }
+                            setEditingOrgNode(null);
+                            }}
+                            className="px-6 py-2.5 text-white text-sm font-bold rounded-xl transition bg-[#4a3189] hover:bg-[#38236b] hover:shadow-lg hover:-translate-y-0.5 disabled:opacity-50 disabled:transform-none shadow-sm flex items-center"
+                        >
+                            <Save className="w-4 h-4 mr-2" /> Save Department
+                        </button>
+                        </div>
+                    </div>
+                    </div>
+                )}
+
+                {alertDialog && (
+                    <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center transform transition-all">
+                        <h3 className="text-lg font-bold text-gray-800 mb-2">System Notice</h3>
+                        <p className="text-sm text-gray-600 mb-6">{alertDialog}</p>
+                        <button 
+                        onClick={() => setAlertDialog(null)} 
+                        className="px-6 py-2.5 bg-[#4a3189] text-white rounded-xl font-bold hover:bg-[#38236b] shadow-md hover:shadow-lg transition w-full"
+                        >
+                        Okay
+                        </button>
+                    </div>
+                    </div>
+                )}
+
+                {confirmDialog && (
+                    <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center transform transition-all">
+                        <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <Trash2 className="w-6 h-6 text-red-500" />
+                        </div>
+                        <h3 className="text-lg font-bold text-gray-800 mb-2">Confirm Action</h3>
+                        <p className="text-sm text-gray-600 mb-6">{confirmDialog.message}</p>
+                        <div className="flex space-x-3 justify-center">
+                        <button 
+                            onClick={() => setConfirmDialog(null)} 
+                            className="px-6 py-2.5 bg-gray-100 text-gray-700 rounded-xl font-bold hover:bg-gray-200 transition flex-1"
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            onClick={confirmDialog.onConfirm} 
+                            className="px-6 py-2.5 bg-red-500 text-white rounded-xl font-bold hover:bg-red-600 shadow-md hover:shadow-lg transition flex-1"
+                        >
+                            Delete
+                        </button>
+                        </div>
+                    </div>
+                    </div>
+                )}
+
+                </div>
+            );
+        }
+
+        const rootElement = document.getElementById('root');
+        const root = createRoot(rootElement);
+        root.render(<App />);
+    </script>
+</body>
+</html>
