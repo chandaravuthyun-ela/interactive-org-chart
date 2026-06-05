@@ -8,13 +8,14 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Firebase is imported here, ready for your configuration when you want a backend -->
+    <!-- FIREBASE CLOUD DATABASE SETUP -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
-        // When you are ready, replace this with your Firebase Console Config!
+        // 🚨 PASTE YOUR FIREBASE CONFIGURATION HERE 🚨
         const firebaseConfig = {
+            // Example:
             // apiKey: "AIzaSyCmf4PPgiOQjEHsLQ8HEaAWW5PqRF1qaUQ",
             // authDomain: "org-chart---eevsc.firebaseapp.com",
             // projectId: "org-chart---eevsc",
@@ -22,12 +23,22 @@
             // messagingSenderId: "874315078989",
             // appId: "1:874315078989:web:56eebbd88885e60ca56b04"
         };
-         const app = initializeApp(firebaseConfig);
-         const db = getFirestore(app);
-         window.db = db; // Makes it accessible inside React
+
+        // This securely connects your React code to the cloud
+        if (Object.keys(firebaseConfig).length > 0) {
+            const app = initializeApp(firebaseConfig);
+            window.db = getFirestore(app);
+            window.firebaseReady = true;
+        } else {
+            window.firebaseReady = false;
+            console.warn("⚠️ Firebase is not configured! Running in local temporary memory mode.");
+        }
+        
+        window.doc = doc;
+        window.setDoc = setDoc;
+        window.onSnapshot = onSnapshot;
     </script>
 
-    <!-- This allows us to use React and Lucide Icons directly in the browser without NPM! -->
     <script type="importmap">
     {
         "imports": {
@@ -39,17 +50,105 @@
     </script>
 </head>
 <body class="bg-[#f4f7fa]">
-    
-    <!-- The container where React will load our app -->
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
-        import React, { useState, useMemo } from 'react';
+        import React, { useState, useEffect, useMemo } from 'react';
         import { createRoot } from 'react-dom/client';
         import { 
             ChevronDown, ChevronRight, Plus, X, Trash2, Edit,
-            Download, Building, Users, Network, Briefcase, Minus, User, Mail, Phone, Calendar, Save, Camera, UserPlus, Image as ImageIcon
+            Download, Building, Users, Network, Briefcase, Minus, User, Mail, Phone, Calendar, Save, Camera, UserPlus, Image as ImageIcon, Loader2
         } from 'lucide-react';
+
+        // ... DEFAULT DATA ...
+        const defaultRawData = [
+            { id: 1, name: "Soknoeun SOEUN", role: "Senior Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+            { id: 2, name: "Molyrattana SOVATH", role: "Finance Manager", gender: "Female", dept: "Finance", insurance: "Management" },
+            { id: 3, name: "Sambo LIM", role: "Education Consultant", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+            { id: 4, name: "Annee CHOUR", role: "Senior Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+            { id: 5, name: "Soreach MEAS", role: "Marketing Officer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
+            { id: 6, name: "Vantak CHHEANG", role: "Country Director", gender: "Male", dept: "Management", insurance: "Management" },
+            { id: 7, name: "Chanseyma KHIEV", role: "Lead Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+            { id: 8, name: "Panha VAT", role: "Lead Counsellor", gender: "Male", dept: "Student Placement", insurance: "Staff member" },
+            { id: 9, name: "Sovannarith CHHEM", role: "Executive Assistant and Marketing Officer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
+            { id: 10, name: "Seyha MAO", role: "Senior Graphic Designer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
+            { id: 11, name: "Sunmean VA", role: "Graphic Designer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
+            { id: 12, name: "Leechuninn PHANG", role: "Business Development & Marketing Manager", gender: "Male", dept: "Marketing", insurance: "Management" },
+            { id: 13, name: "Molika MENG", role: "Office Manager - Phnom Penh City", gender: "Female", dept: "Student Placement", insurance: "Management" },
+            { id: 14, name: "Haingtek LAY", role: "Assistant Manager", gender: "Male", dept: "Student Placement", insurance: "Staff member" },
+            { id: 15, name: "Henghort TEAN", role: "HR Manager", gender: "Male", dept: "HR", insurance: "Management" },
+            { id: 16, name: "Sovannara KONG", role: "Client Service Officer", gender: "Female", dept: "Client Service", insurance: "Staff member" },
+            { id: 17, name: "Meng kheang TANG", role: "Senior Counsellor", gender: "Male", dept: "Student Placement", insurance: "Staff member" },
+            { id: 18, name: "Vothana CHHOEURY", role: "Office Manager - Siem Reap City", gender: "Male", dept: "Student Placement", insurance: "Management" },
+            { id: 19, name: "Mane SAMBATH", role: "Translation - Team Lead", gender: "Female", dept: "Translation", insurance: "Staff member" },
+            { id: 20, name: "Malish VANN", role: "Education Consultant", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+            { id: 21, name: "Somealea KHUN", role: "Project Coordinator", gender: "Female", dept: "Project", insurance: "Staff member" },
+            { id: 22, name: "Nget KAO", role: "English- khmer Translator", gender: "Male", dept: "Translation", insurance: "Staff member" },
+            { id: 23, name: "Deap SOCHYNA", role: "Marketing Assistant", gender: "Female", dept: "Marketing", insurance: "Staff member" },
+            { id: 24, name: "Vutha ROS", role: "Academic Manager", gender: "Male", dept: "Academic", insurance: "Management" },
+            { id: 25, name: "Huyman KHUN", role: "Junior Graphic Designer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
+            { id: 26, name: "Chandaravuth YUN", role: "HR Executive", gender: "Male", dept: "HR", insurance: "Staff member" },
+            { id: 27, name: "Sambo CHHORN", role: "Database Specialist", gender: "Male", dept: "Database", insurance: "Staff member" },
+            { id: 28, name: "Viseu MOM", role: "Database Specialist", gender: "Male", dept: "Database", insurance: "Staff member" },
+            { id: 29, name: "Teppidour SROEUNG", role: "English- khmer Translator", gender: "Female", dept: "Translation", insurance: "Staff member" },
+            { id: 30, name: "Yokseang KHUN", role: "Project Manager", gender: "Female", dept: "Project", insurance: "Management" },
+            { id: 31, name: "Gechhong TANG", role: "English- khmer Translator", gender: "Female", dept: "Translation", insurance: "Staff member" },
+            { id: 32, name: "Dison TANN", role: "Junior Graphic Designer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
+            { id: 33, name: "Syphann LY", role: "Academic Coordinator", gender: "Male", dept: "Academic", insurance: "Staff member" },
+            { id: 34, name: "Rotha SENG", role: "Marketing Assistant", gender: "Female", dept: "Marketing", insurance: "Staff member" },
+            { id: 35, name: "Chandanin KIM", role: "Accountant & Procurement Officer", gender: "Female", dept: "Finance", insurance: "Staff member" },
+            { id: 36, name: "Sokhorn MITH", role: "Study Abroad Counsellor", gender: "Male", dept: "Student Placement", insurance: "Staff member" },
+            { id: 37, name: "Narita CHHORN", role: "Study Abroad Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+            { id: 38, name: "Sokmouy LING", role: "Study Abroad Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
+            { id: 39, name: "Rapich TAN", role: "Marketing Intern", gender: "Male", dept: "Interns", insurance: "Staff member" },
+            { id: 40, name: "Kimleang MEAS", role: "Marketing Intern", gender: "Female", dept: "Interns", insurance: "Staff member" },
+            { id: 41, name: "Niblair TROUY", role: "Marketing Intern", gender: "Male", dept: "Interns", insurance: "Staff member" },
+            { id: 42, name: "Panharoth TAUCH", role: "Marketing Intern", gender: "Female", dept: "Interns", insurance: "Staff member" }
+        ];
+
+        const defaultEmployeesList = defaultRawData.map(emp => {
+            const names = emp.name.split(' ');
+            const familyName = names.pop();
+            const givenName = names.join(' ');
+            const branchOffice = (emp.name === "Malish VANN" || emp.name === "Vothana CHHOEURY") 
+                ? "Siem Reap Branch" : "Phnom Penh HQ";
+
+            return {
+                id: `ELA${String(emp.id).padStart(3, '0')}`,
+                name: emp.name, givenName, familyName, dept: emp.dept, role: emp.role,
+                email: `${givenName.toLowerCase().replace(/\s+/g, '')}.${familyName.toLowerCase()}@ela.edu`,
+                personalEmail: `${givenName.toLowerCase().replace(/\s+/g, '')}${emp.id}@gmail.com`,
+                gender: emp.gender, dob: '1990-05-15', contactNumber: '+855 12 345 678',
+                branchOffice: branchOffice, insurance: emp.insurance, joinDate: '2023-01-10', status: 'Active',
+                profilePhoto: `https://randomuser.me/api/portraits/${emp.gender === 'Female' ? 'women' : 'men'}/${(emp.id % 90) + 1}.jpg`
+            };
+        });
+
+        const defaultOrgData = {
+            id: 'root',
+            dept: 'Executive Management',
+            managerName: 'Vantak CHHEANG',
+            assistantName: 'Sovannarith CHHEM',
+            staffNames: [],
+            children: [
+                {
+                    id: 'sp', dept: 'Student Placement', managerName: null, staffNames: [],
+                    children: [
+                    { id: 'sp_pp', dept: 'Phnom Penh City', managerName: 'Molika MENG', staffNames: ["Haingtek LAY", "Chanseyma KHIEV", "Panha VAT", "Meng kheang TANG", "Soknoeun SOEUN", "Annee CHOUR", "Sambo LIM", "Sokhorn MITH", "Narita CHHORN", "Sokmouy LING"], children: [
+                        { id: 'sp_tr', dept: 'Translation', managerName: 'Mane SAMBATH', staffNames: ["Nget KAO", "Teppidour SROEUNG", "Gechhong TANG"], children: [] },
+                        { id: 'sp_cs', dept: 'Client Service', managerName: 'Sovannara KONG', staffNames: [], children: [] }
+                    ] },
+                    { id: 'sp_sr', dept: 'Siem Reap City', managerName: 'Vothana CHHOEURY', staffNames: ["Malish VANN"], children: [] }
+                    ]
+                },
+                { id: 'hr', dept: 'Human Resources', managerName: 'Henghort TEAN', staffNames: ["Chandaravuth YUN"], children: [] },
+                { id: 'fin', dept: 'Finance', managerName: 'Molyrattana SOVATH', staffNames: ["Chandanin KIM"], children: [] },
+                { id: 'mkt', dept: 'Marketing', managerName: 'Leechuninn PHANG', staffNames: ["Soreach MEAS", "Deap SOCHYNA", "Seyha MAO", "Sunmean VA", "Huyman KHUN", "Dison TANN", "Rotha SENG", "Rapich TAN", "Kimleang MEAS", "Niblair TROUY", "Panharoth TAUCH"], children: [] },
+                { id: 'proj', dept: 'Project', managerName: 'Yokseang KHUN', staffNames: ["Somealea KHUN"], children: [] },
+                { id: 'acad', dept: 'Academic', managerName: 'Vutha ROS', staffNames: ["Syphann LY"], children: [] },
+                { id: 'it', dept: 'Information Technology', managerName: null, staffNames: ["Sambo CHHORN", "Viseu MOM"], children: [] }
+            ]
+        };
 
         const ModernOrgNode = ({ dept, manager, staffList, children, onEmployeeClick, isEditing, onEdit, onAddMenu, onDelete, isRoot, alignDrop }) => {
             const [expanded, setExpanded] = useState(false);
@@ -125,7 +224,6 @@
                         </div>
                     </div>
                     
-                    {}
                     <div 
                         onClick={(e) => { e.stopPropagation(); if(manager && onEmployeeClick) onEmployeeClick(manager); }}
                         className={`pt-10 pb-5 px-6 flex flex-col items-center ${manager ? 'cursor-pointer' : ''}`}
@@ -142,7 +240,6 @@
                         ) : null}
                     </div>
 
-                    {}
                     {hasStaff && (
                         <div className={`overflow-hidden transition-all duration-300 ease-in-out ${expanded ? 'max-h-[1500px] opacity-100' : 'max-h-0 opacity-0'}`}>
                         <div className="flex flex-col items-center w-full px-3 pb-8 pt-0 border-t border-gray-100/60 bg-gray-50/50 rounded-b-3xl">
@@ -172,7 +269,6 @@
                         </div>
                     )}
 
-                    {}
                     {hasStaff && (
                         <div 
                         onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
@@ -196,96 +292,58 @@
         };
 
         function App() {
-            const [allEmployeesList, setAllEmployeesList] = useState(() => {
-                const rawData = [
-                { id: 1, name: "Soknoeun SOEUN", role: "Senior Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
-                { id: 2, name: "Molyrattana SOVATH", role: "Finance Manager", gender: "Female", dept: "Finance", insurance: "Management" },
-                { id: 3, name: "Sambo LIM", role: "Education Consultant", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
-                { id: 4, name: "Annee CHOUR", role: "Senior Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
-                { id: 5, name: "Soreach MEAS", role: "Marketing Officer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
-                { id: 6, name: "Vantak CHHEANG", role: "Country Director", gender: "Male", dept: "Management", insurance: "Management" },
-                { id: 7, name: "Chanseyma KHIEV", role: "Lead Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
-                { id: 8, name: "Panha VAT", role: "Lead Counsellor", gender: "Male", dept: "Student Placement", insurance: "Staff member" },
-                { id: 9, name: "Sovannarith CHHEM", role: "Executive Assistant and Marketing Officer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
-                { id: 10, name: "Seyha MAO", role: "Senior Graphic Designer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
-                { id: 11, name: "Sunmean VA", role: "Graphic Designer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
-                { id: 12, name: "Leechuninn PHANG", role: "Business Development & Marketing Manager", gender: "Male", dept: "Marketing", insurance: "Management" },
-                { id: 13, name: "Molika MENG", role: "Office Manager - Phnom Penh City", gender: "Female", dept: "Student Placement", insurance: "Management" },
-                { id: 14, name: "Haingtek LAY", role: "Assistant Manager", gender: "Male", dept: "Student Placement", insurance: "Staff member" },
-                { id: 15, name: "Henghort TEAN", role: "HR Manager", gender: "Male", dept: "HR", insurance: "Management" },
-                { id: 16, name: "Sovannara KONG", role: "Client Service Officer", gender: "Female", dept: "Client Service", insurance: "Staff member" },
-                { id: 17, name: "Meng kheang TANG", role: "Senior Counsellor", gender: "Male", dept: "Student Placement", insurance: "Staff member" },
-                { id: 18, name: "Vothana CHHOEURY", role: "Office Manager - Siem Reap City", gender: "Male", dept: "Student Placement", insurance: "Management" },
-                { id: 19, name: "Mane SAMBATH", role: "Translation - Team Lead", gender: "Female", dept: "Translation", insurance: "Staff member" },
-                { id: 20, name: "Malish VANN", role: "Education Consultant", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
-                { id: 21, name: "Somealea KHUN", role: "Project Coordinator", gender: "Female", dept: "Project", insurance: "Staff member" },
-                { id: 22, name: "Nget KAO", role: "English- khmer Translator", gender: "Male", dept: "Translation", insurance: "Staff member" },
-                { id: 23, name: "Deap SOCHYNA", role: "Marketing Assistant", gender: "Female", dept: "Marketing", insurance: "Staff member" },
-                { id: 24, name: "Vutha ROS", role: "Academic Manager", gender: "Male", dept: "Academic", insurance: "Management" },
-                { id: 25, name: "Huyman KHUN", role: "Junior Graphic Designer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
-                { id: 26, name: "Chandaravuth YUN", role: "HR Executive", gender: "Male", dept: "HR", insurance: "Staff member" },
-                { id: 27, name: "Sambo CHHORN", role: "Database Specialist", gender: "Male", dept: "Database", insurance: "Staff member" },
-                { id: 28, name: "Viseu MOM", role: "Database Specialist", gender: "Male", dept: "Database", insurance: "Staff member" },
-                { id: 29, name: "Teppidour SROEUNG", role: "English- khmer Translator", gender: "Female", dept: "Translation", insurance: "Staff member" },
-                { id: 30, name: "Yokseang KHUN", role: "Project Manager", gender: "Female", dept: "Project", insurance: "Management" },
-                { id: 31, name: "Gechhong TANG", role: "English- khmer Translator", gender: "Female", dept: "Translation", insurance: "Staff member" },
-                { id: 32, name: "Dison TANN", role: "Junior Graphic Designer", gender: "Male", dept: "Marketing", insurance: "Staff member" },
-                { id: 33, name: "Syphann LY", role: "Academic Coordinator", gender: "Male", dept: "Academic", insurance: "Staff member" },
-                { id: 34, name: "Rotha SENG", role: "Marketing Assistant", gender: "Female", dept: "Marketing", insurance: "Staff member" },
-                { id: 35, name: "Chandanin KIM", role: "Accountant & Procurement Officer", gender: "Female", dept: "Finance", insurance: "Staff member" },
-                { id: 36, name: "Sokhorn MITH", role: "Study Abroad Counsellor", gender: "Male", dept: "Student Placement", insurance: "Staff member" },
-                { id: 37, name: "Narita CHHORN", role: "Study Abroad Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
-                { id: 38, name: "Sokmouy LING", role: "Study Abroad Counsellor", gender: "Female", dept: "Student Placement", insurance: "Staff member" },
-                { id: 39, name: "Rapich TAN", role: "Marketing Intern", gender: "Male", dept: "Interns", insurance: "Staff member" },
-                { id: 40, name: "Kimleang MEAS", role: "Marketing Intern", gender: "Female", dept: "Interns", insurance: "Staff member" },
-                { id: 41, name: "Niblair TROUY", role: "Marketing Intern", gender: "Male", dept: "Interns", insurance: "Staff member" },
-                { id: 42, name: "Panharoth TAUCH", role: "Marketing Intern", gender: "Female", dept: "Interns", insurance: "Staff member" }
-                ];
+            const [orgData, setOrgData] = useState(defaultOrgData);
+            const [allEmployeesList, setAllEmployeesList] = useState(defaultEmployeesList);
+            const [isDbLoading, setIsDbLoading] = useState(true);
 
-                return rawData.map(emp => {
-                const names = emp.name.split(' ');
-                const familyName = names.pop();
-                const givenName = names.join(' ');
-                const branchOffice = (emp.name === "Malish VANN" || emp.name === "Vothana CHHOEURY") 
-                    ? "Siem Reap Branch" : "Phnom Penh HQ";
+            // Fetch data from Firebase on load
+            useEffect(() => {
+                if (!window.firebaseReady) {
+                    setIsDbLoading(false);
+                    return;
+                }
 
-                return {
-                    id: `ELA${String(emp.id).padStart(3, '0')}`,
-                    name: emp.name, givenName, familyName, dept: emp.dept, role: emp.role,
-                    email: `${givenName.toLowerCase().replace(/\s+/g, '')}.${familyName.toLowerCase()}@ela.edu`,
-                    personalEmail: `${givenName.toLowerCase().replace(/\s+/g, '')}${emp.id}@gmail.com`,
-                    gender: emp.gender, dob: '1990-05-15', contactNumber: '+855 12 345 678',
-                    branchOffice: branchOffice, insurance: emp.insurance, joinDate: '2023-01-10', status: 'Active',
-                    profilePhoto: `https://randomuser.me/api/portraits/${emp.gender === 'Female' ? 'women' : 'men'}/${(emp.id % 90) + 1}.jpg`
-                };
+                const docRef = window.doc(window.db, 'orgChart', 'main');
+                
+                // Real-time listener: Updates UI if anyone changes the database
+                const unsubscribe = window.onSnapshot(docRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        setOrgData(data.tree);
+                        setAllEmployeesList(data.employees);
+                        setIsDbLoading(false);
+                    } else {
+                        // Document doesn't exist yet, save the default structure
+                        window.setDoc(docRef, {
+                            tree: defaultOrgData,
+                            employees: defaultEmployeesList
+                        }).then(() => setIsDbLoading(false));
+                    }
                 });
-            });
 
-            const [orgData, setOrgData] = useState({
-                id: 'root',
-                dept: 'Executive Management',
-                managerName: 'Vantak CHHEANG',
-                assistantName: 'Sovannarith CHHEM',
-                staffNames: [],
-                children: [
-                {
-                    id: 'sp', dept: 'Student Placement', managerName: null, staffNames: [],
-                    children: [
-                    { id: 'sp_pp', dept: 'Phnom Penh City', managerName: 'Molika MENG', staffNames: ["Haingtek LAY", "Chanseyma KHIEV", "Panha VAT", "Meng kheang TANG", "Soknoeun SOEUN", "Annee CHOUR", "Sambo LIM", "Sokhorn MITH", "Narita CHHORN", "Sokmouy LING"], children: [
-                        { id: 'sp_tr', dept: 'Translation', managerName: 'Mane SAMBATH', staffNames: ["Nget KAO", "Teppidour SROEUNG", "Gechhong TANG"], children: [] },
-                        { id: 'sp_cs', dept: 'Client Service', managerName: 'Sovannara KONG', staffNames: [], children: [] }
-                    ] },
-                    { id: 'sp_sr', dept: 'Siem Reap City', managerName: 'Vothana CHHOEURY', staffNames: ["Malish VANN"], children: [] }
-                    ]
-                },
-                { id: 'hr', dept: 'Human Resources', managerName: 'Henghort TEAN', staffNames: ["Chandaravuth YUN"], children: [] },
-                { id: 'fin', dept: 'Finance', managerName: 'Molyrattana SOVATH', staffNames: ["Chandanin KIM"], children: [] },
-                { id: 'mkt', dept: 'Marketing', managerName: 'Leechuninn PHANG', staffNames: ["Soreach MEAS", "Deap SOCHYNA", "Seyha MAO", "Sunmean VA", "Huyman KHUN", "Dison TANN", "Rotha SENG", "Rapich TAN", "Kimleang MEAS", "Niblair TROUY", "Panharoth TAUCH"], children: [] },
-                { id: 'proj', dept: 'Project', managerName: 'Yokseang KHUN', staffNames: ["Somealea KHUN"], children: [] },
-                { id: 'acad', dept: 'Academic', managerName: 'Vutha ROS', staffNames: ["Syphann LY"], children: [] },
-                { id: 'it', dept: 'Information Technology', managerName: null, staffNames: ["Sambo CHHORN", "Viseu MOM"], children: [] }
-                ]
-            });
+                return () => unsubscribe();
+            }, []);
+
+            // Master function to save changes to the Cloud
+            const saveToCloud = (newTree, newEmployees) => {
+                const finalTree = newTree || orgData;
+                const finalEmps = newEmployees || allEmployeesList;
+                
+                // Immediate UI update for responsiveness
+                if (newTree) setOrgData(newTree);
+                if (newEmployees) setAllEmployeesList(finalEmps);
+
+                // Background save to Cloud Firestore
+                if (window.firebaseReady) {
+                    window.setDoc(window.doc(window.db, 'orgChart', 'main'), {
+                        tree: finalTree,
+                        employees: finalEmps
+                    }).catch(err => {
+                        console.error("Firebase Save Error:", err);
+                        setAlertDialog("Failed to save to cloud database. Ensure Firebase security rules are set to test mode.");
+                    });
+                }
+            };
 
             const [isEditingOrg, setIsEditingOrg] = useState(false);
             const [editingOrgNode, setEditingOrgNode] = useState(null);
@@ -309,7 +367,8 @@
             const [isDraggingOrg, setIsDraggingOrg] = useState(false);
             const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
             const [activeOrgTab, setActiveOrgTab] = useState('Overall Structure');
-            const orgTabs = useMemo(() => ['Overall Structure', ...orgData.children.map(c => c.dept)], [orgData]);
+            
+            const orgTabs = useMemo(() => ['Overall Structure', ...(orgData?.children?.map(c => c.dept) || [])], [orgData]);
 
             const updateNode = (tree, id, data) => {
                 if (tree.id === id) return { ...tree, ...data };
@@ -371,8 +430,8 @@
                 if (!element) throw new Error("Chart element not found");
                 
                 const canvas = await window.html2canvas(element, {
-                    backgroundColor: '#f4f7fa', // Light background
-                    scale: 2, // High quality scale
+                    backgroundColor: '#f4f7fa',
+                    scale: 2, 
                     useCORS: true,
                     logging: false
                 });
@@ -415,7 +474,8 @@
             const rootAssistant = getEmp(orgData.assistantName);
 
             const handleSavePhoto = (empId) => {
-                setAllEmployeesList(prev => prev.map(emp => emp.id === empId ? { ...emp, profilePhoto: tempPhotoUrl } : emp));
+                const newEmps = allEmployeesList.map(emp => emp.id === empId ? { ...emp, profilePhoto: tempPhotoUrl } : emp);
+                saveToCloud(null, newEmps);
                 setSelectedEmployeeProfile(prev => ({ ...prev, profilePhoto: tempPhotoUrl }));
                 setEditingPhotoId(null);
             };
@@ -428,36 +488,35 @@
 
                 const newId = `ELA${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
                 const newEmp = {
-                id: newId,
-                name: newEmployeeForm.name,
-                role: newEmployeeForm.role,
-                gender: newEmployeeForm.gender || 'Other',
-                dept: 'Assigned',
-                email: `${newEmployeeForm.name.toLowerCase().replace(/\s+/g, '')}@ela.edu`,
-                contactNumber: 'TBD',
-                branchOffice: 'HQ',
-                insurance: 'Staff member',
-                joinDate: new Date().toISOString().split('T')[0],
-                profilePhoto: `https://randomuser.me/api/portraits/${newEmployeeForm.gender === 'Female' ? 'women' : 'men'}/${Math.floor(Math.random() * 90) + 1}.jpg`
+                    id: newId,
+                    name: newEmployeeForm.name,
+                    role: newEmployeeForm.role,
+                    gender: newEmployeeForm.gender || 'Other',
+                    dept: 'Assigned',
+                    email: `${newEmployeeForm.name.toLowerCase().replace(/\s+/g, '')}@ela.edu`,
+                    contactNumber: 'TBD',
+                    branchOffice: 'HQ',
+                    insurance: 'Staff member',
+                    joinDate: new Date().toISOString().split('T')[0],
+                    profilePhoto: `https://randomuser.me/api/portraits/${newEmployeeForm.gender === 'Female' ? 'women' : 'men'}/${Math.floor(Math.random() * 90) + 1}.jpg`
                 };
 
-                // Add to global list
-                setAllEmployeesList(prev => [...prev, newEmp]);
+                const newEmps = [...allEmployeesList, newEmp];
 
-                // Add to specific department
-                setOrgData(prev => {
+                // Recursive function to add staff to the specific department
                 const appendStaff = (tree) => {
                     if (tree.id === newEmployeeForm.parentId) {
-                    return { ...tree, staffNames: [...(tree.staffNames || []), newEmp.name] };
+                        return { ...tree, staffNames: [...(tree.staffNames || []), newEmp.name] };
                     }
                     if (tree.children) {
-                    return { ...tree, children: tree.children.map(appendStaff) };
+                        return { ...tree, children: tree.children.map(appendStaff) };
                     }
                     return tree;
                 };
-                return appendStaff(prev);
-                });
+                
+                const newTree = appendStaff(orgData);
 
+                saveToCloud(newTree, newEmps);
                 setNewEmployeeForm(null);
                 setAlertDialog(`${newEmp.name} successfully added to the organization.`);
             };
@@ -473,32 +532,44 @@
                     manager={manager} 
                     staffList={staff} 
                     onEmployeeClick={(emp) => {
-                    setSelectedEmployeeProfile(emp);
-                    setEditingPhotoId(null);
+                        setSelectedEmployeeProfile(emp);
+                        setEditingPhotoId(null);
                     }}
                     isEditing={isEditingOrg}
                     isRoot={false}
                     onEdit={() => { 
-                    setEditingOrgNode(node.id); 
-                    setOrgNodeForm({ id: node.id, dept: node.dept, managerName: node.managerName || '', staffNames: node.staffNames || [] }); 
+                        setEditingOrgNode(node.id); 
+                        setOrgNodeForm({ id: node.id, dept: node.dept, managerName: node.managerName || '', staffNames: node.staffNames || [] }); 
                     }}
                     onAddMenu={() => {
-                    setAddMenuConfig({ parentId: node.id, deptName: node.dept });
+                        setAddMenuConfig({ parentId: node.id, deptName: node.dept });
                     }}
                     onDelete={() => {
-                    setConfirmDialog({
-                        message: `Are you sure you want to delete ${node.dept} and all its sub-departments?`,
-                        onConfirm: () => {
-                        setOrgData(prev => deleteNode(prev, node.id));
-                        setConfirmDialog(null);
-                        }
-                    });
+                        setConfirmDialog({
+                            message: `Are you sure you want to delete ${node.dept} and all its sub-departments?`,
+                            onConfirm: () => {
+                                const newTree = deleteNode(orgData, node.id);
+                                saveToCloud(newTree, null);
+                                setConfirmDialog(null);
+                            }
+                        });
                     }}
                 >
                     {node.children && node.children.length > 0 && node.children.map(child => renderOrgTree(child, level + 1))}
                 </ModernOrgNode>
                 );
             };
+
+            // Show loading spinner while fetching initial Firebase data
+            if (isDbLoading) {
+                return (
+                    <div className="flex flex-col h-screen bg-[#f4f7fa] items-center justify-center">
+                        <Loader2 className="w-12 h-12 text-[#dfa634] animate-spin mb-4" />
+                        <h2 className="text-xl font-bold text-gray-800">Connecting to Cloud Database...</h2>
+                        <p className="text-gray-500 text-sm mt-2">Loading organization structure</p>
+                    </div>
+                );
+            }
 
             return (
                 <div className="flex flex-col h-screen bg-[#f4f7fa] font-sans relative">
@@ -510,6 +581,17 @@
                     <h1 className="text-xl font-extrabold text-gray-800 tracking-tight">Interactive <span className="text-[#dfa634]">Org Chart</span></h1>
                     </div>
                     <div className="flex items-center space-x-6">
+                    {window.firebaseReady ? (
+                        <div className="flex items-center space-x-2 bg-green-50 px-3 py-1.5 rounded-full border border-green-100 shadow-inner">
+                            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                            <span className="text-xs font-bold text-green-700">Cloud Sync Active</span>
+                        </div>
+                    ) : (
+                        <div className="flex items-center space-x-2 bg-yellow-50 px-3 py-1.5 rounded-full border border-yellow-100 shadow-inner">
+                            <div className="w-2 h-2 rounded-full bg-yellow-500"></div>
+                            <span className="text-xs font-bold text-yellow-700">Local Mode</span>
+                        </div>
+                    )}
                     <div className="flex items-center space-x-2 bg-gray-50 px-3 py-1.5 rounded-full border border-gray-100 shadow-inner">
                         <div className="w-8 h-8 rounded-full bg-[#dfa634] text-white flex items-center justify-center font-bold text-xs shadow-sm ring-2 ring-white">HR</div>
                         <span className="text-sm font-bold text-gray-700">System Admin</span>
@@ -610,7 +692,6 @@
                     </div>
                     </div>
                     
-                    {}
                     <div 
                     className={`flex-1 mt-6 relative bg-white rounded-3xl shadow-inner overflow-hidden border border-gray-200/60 flex items-start pt-16 ${isDraggingOrg ? 'cursor-grabbing' : 'cursor-grab'}`}
                     onWheel={(e) => {
@@ -715,7 +796,7 @@
                     </div>
                 </main>
 
-                {}
+                {/* MODALS */}
                 {selectedEmployeeProfile && (
                     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col relative transform transition-all">
@@ -788,18 +869,22 @@
                             setConfirmDialog({
                                 message: `Are you sure you want to permanently delete ${selectedEmployeeProfile.name}? This will remove them from all departments.`,
                                 onConfirm: () => {
-                                setAllEmployeesList(prev => prev.filter(e => e.id !== selectedEmployeeProfile.id));
-                                const removeEmp = (tree) => {
-                                    let updated = { ...tree };
-                                    if (updated.managerName === selectedEmployeeProfile.name) updated.managerName = null;
-                                    if (updated.assistantName === selectedEmployeeProfile.name) updated.assistantName = null;
-                                    if (updated.staffNames) updated.staffNames = updated.staffNames.filter(n => n !== selectedEmployeeProfile.name);
-                                    if (updated.children) updated.children = updated.children.map(removeEmp);
-                                    return updated;
-                                };
-                                setOrgData(prev => removeEmp(prev));
-                                setSelectedEmployeeProfile(null);
-                                setConfirmDialog(null);
+                                    const newEmps = allEmployeesList.filter(e => e.id !== selectedEmployeeProfile.id);
+                                    
+                                    const removeEmp = (tree) => {
+                                        let updated = { ...tree };
+                                        if (updated.managerName === selectedEmployeeProfile.name) updated.managerName = null;
+                                        if (updated.assistantName === selectedEmployeeProfile.name) updated.assistantName = null;
+                                        if (updated.staffNames) updated.staffNames = updated.staffNames.filter(n => n !== selectedEmployeeProfile.name);
+                                        if (updated.children) updated.children = updated.children.map(removeEmp);
+                                        return updated;
+                                    };
+                                    
+                                    const newTree = removeEmp(orgData);
+                                    saveToCloud(newTree, newEmps);
+                                    
+                                    setSelectedEmployeeProfile(null);
+                                    setConfirmDialog(null);
                                 }
                             });
                             }}
@@ -1012,13 +1097,15 @@
                         <button 
                             disabled={!orgNodeForm.dept}
                             onClick={() => {
-                            if (editingOrgNode.startsWith('new_')) {
-                                const parentId = editingOrgNode.replace('new_', '');
-                                setOrgData(prev => addNode(prev, parentId, orgNodeForm));
-                            } else {
-                                setOrgData(prev => updateNode(prev, editingOrgNode, orgNodeForm));
-                            }
-                            setEditingOrgNode(null);
+                                let newTree;
+                                if (editingOrgNode.startsWith('new_')) {
+                                    const parentId = editingOrgNode.replace('new_', '');
+                                    newTree = addNode(orgData, parentId, orgNodeForm);
+                                } else {
+                                    newTree = updateNode(orgData, editingOrgNode, orgNodeForm);
+                                }
+                                saveToCloud(newTree, null);
+                                setEditingOrgNode(null);
                             }}
                             className="px-6 py-2.5 text-white text-sm font-bold rounded-xl transition bg-[#4a3189] hover:bg-[#38236b] hover:shadow-lg hover:-translate-y-0.5 disabled:opacity-50 disabled:transform-none shadow-sm flex items-center"
                         >
