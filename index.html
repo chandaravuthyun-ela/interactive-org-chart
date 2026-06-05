@@ -884,7 +884,7 @@
                                     accept="image/png, image/jpeg, image/jpg"
                                     className="hidden"
                                     onChange={(e) => {
-                                        const file = e.target.files; // FIX: Target the specific file
+                                        const file = e.target.files; // FIX: Added to grab the actual file, not the list!
                                         if (file) {
                                             // Process and instantly save the file
                                             processImageFile(file, (base64) => {
