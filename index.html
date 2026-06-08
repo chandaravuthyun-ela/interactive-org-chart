@@ -152,7 +152,7 @@
 
         // ─────────────────────────────────────────────────────────────────────────
         // FIX: processImageFile now correctly receives a single File object (not
-        // a FileList). Call it with e.target.files everywhere.
+        // a FileList). Call it with e.target.files[0] everywhere.
         // ─────────────────────────────────────────────────────────────────────────
         const processImageFile = (file, callback) => {
             if (!file) return;
@@ -448,7 +448,7 @@
                 setOrgZoomLevel(1);
                 setOrgPan({ x: 0, y: 0 });
                 setIsEditingOrg(false);
-                // Removed forceExpand so it exports exactly what is visible on screen
+                setForceExpand(true);
                 
                 await new Promise(resolve => setTimeout(resolve, 800));
                 
@@ -465,11 +465,9 @@
                 const element = document.getElementById('org-chart-export-area');
                 if (!element) throw new Error("Chart element not found");
                 
-                const exportScale = 3; // Increased scale for high-res printing quality
-
                 const canvas = await window.html2canvas(element, {
                     backgroundColor: '#f4f7fa',
-                    scale: exportScale, 
+                    scale: 2,
                     useCORS: true,
                     logging: false,
                     width: element.scrollWidth,
@@ -477,20 +475,13 @@
                     windowWidth: element.scrollWidth,
                     windowHeight: element.scrollHeight,
                     x: 0,
-                    y: 0,
-                    onclone: (clonedDoc) => {
-                        // Workaround to fix text distortion/clipping caused by 'truncate' class in html2canvas
-                        const truncatedElements = clonedDoc.querySelectorAll('.truncate');
-                        truncatedElements.forEach(el => {
-                            el.style.textOverflow = 'clip';
-                        });
-                    }
+                    y: 0
                 });
 
                 if (format === 'png') {
                     const link = document.createElement('a');
                     link.download = 'ELA_Org_Chart.png';
-                    link.href = canvas.toDataURL('image/png', 1.0);
+                    link.href = canvas.toDataURL('image/png');
                     link.click();
                     setAlertDialog(null);
                 } else if (format === 'pdf') {
@@ -503,18 +494,12 @@
                     });
                     }
                     const { jsPDF } = window.jspdf;
-                    
-                    // Divide dimensions by scale so PDF maintains standard physical size but packs 3x pixel density
-                    const pdfWidth = canvas.width / exportScale;
-                    const pdfHeight = canvas.height / exportScale;
-
                     const pdf = new jsPDF({
-                    orientation: pdfWidth > pdfHeight ? 'landscape' : 'portrait',
+                    orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
                     unit: 'px',
-                    format: [pdfWidth, pdfHeight]
+                    format: [canvas.width, canvas.height]
                     });
-                    
-                    pdf.addImage(canvas.toDataURL('image/png', 1.0), 'PNG', 0, 0, pdfWidth, pdfHeight);
+                    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
                     pdf.save('ELA_Org_Chart.pdf');
                     setAlertDialog(null);
                 }
@@ -525,6 +510,7 @@
                 setOrgZoomLevel(prevZoom);
                 setOrgPan(prevPan);
                 setIsEditingOrg(wasEditing);
+                setForceExpand(false);
                 setAlertDialog(null);
                 }
             };
@@ -537,10 +523,10 @@
 
             // ─────────────────────────────────────────────────────────────────────
             // FIX: handlePhotoUpload — was using e.target.files (a FileList object)
-            // instead of e.target.files (the actual File). Fixed here.
+            // instead of e.target.files[0] (the actual File). Fixed here.
             // ─────────────────────────────────────────────────────────────────────
             const handlePhotoUpload = (e, empId) => {
-                const file = e.target.files; // ← THE CRITICAL FIX
+                const file = e.target.files[0]; // ← THE CRITICAL FIX
                 if (!file) return;
 
                 // Validate file type
@@ -608,7 +594,7 @@
                     contactNumber: 'TBD',
                     branchOffice: 'HQ',
                     insurance: 'Staff member',
-                    joinDate: new Date().toISOString().split('T'),
+                    joinDate: new Date().toISOString().split('T')[0],
                     profilePhoto: defaultAvatar,
                     defaultPhoto: defaultAvatar   // ← store default so delete can restore it
                 };
