@@ -172,8 +172,6 @@
         };
 
         // ─── ROBUST IMAGE PRE-LOADER ────────────────────────────────────────────────
-        // Converts all remote img src values to base64 data URLs on a given element.
-        // This prevents CORS-tainted canvas and blank/clipped images in html2canvas.
         const preloadImagesForExport = async (element) => {
             const imgs = Array.from(element.querySelectorAll('img'));
             await Promise.all(imgs.map(img => new Promise(resolve => {
@@ -190,34 +188,22 @@
                     resolve();
                 };
                 image.onerror = () => resolve();
-                // Cache-bust to help CORS
                 image.src = img.src + (img.src.includes('?') ? '&' : '?') + '_cb=' + Date.now();
             })));
         };
 
         // ─── EXPORT WORKER ──────────────────────────────────────────────────────────
-        // Renders the org chart to an off-screen fixed-size container so html2canvas
-        // gets accurate, unclipped dimensions. Key decisions:
+        // Exports EXACTLY what is currently on screen (the user's current expand/collapse
+        // state is preserved — no panels are force-opened). Output is fitted onto an A4
+        // page at print resolution (300 DPI) on a pure white background.
         //
-        //  1. We do NOT clone the live element — instead we render a fresh static
-        //     HTML snapshot into an off-screen div. This avoids all transition/
-        //     max-height collapse issues entirely.
-        //
-        //  2. We read the live element's full scrollWidth/scrollHeight (before any
-        //     transform is applied) to know exactly how big the chart really is.
-        //
-        //  3. We inject a <style> tag that overrides every collapsing utility class
-        //     so staff panels and other animated elements are always visible.
-        //
-        //  4. We use scale:1 so what html2canvas captures is pixel-perfect — no
-        //     division gymnastics needed for PDF sizing.
-        //
-        //  5. For PDF we compute page dimensions from the actual captured canvas
-        //     using a fixed DPI (150) so the output is never compressed/squished.
-        const handleExport = async (format, setIsExporting, setAlertDialog) => {
+        //  - sourceId: the DOM id of the element to capture. Defaults to the whole chart.
+        //  - format: 'png' | 'pdf'
+        const A4 = { wmm: 210, hmm: 297 }; // A4 portrait in millimetres
+
+        const handleExport = async (format, setIsExporting, setAlertDialog, sourceId = 'org-chart-export-area', fileLabel = 'ELA_Org_Chart') => {
             setIsExporting(true);
             try {
-                // Load html2canvas
                 if (!window.html2canvas) {
                     await new Promise((res, rej) => {
                         const s = document.createElement('script');
@@ -227,80 +213,63 @@
                     });
                 }
 
-                const liveArea = document.getElementById('org-chart-export-area');
+                const liveArea = document.getElementById(sourceId);
                 if (!liveArea) throw new Error('Chart element not found');
 
-                // Step 1 — clone the live area into an off-screen container
+                // Clone the live area off-screen, preserving its CURRENT expand/collapse state.
                 const wrapper = document.createElement('div');
                 wrapper.style.cssText = [
                     'position:fixed',
                     'top:-99999px',
                     'left:-99999px',
                     'z-index:-9999',
-                    'background:#f4f7fa',
+                    'background:#ffffff',
                     'overflow:visible',
-                    'padding:80px 60px',
-                    // No max-width constraint — let it be as wide as needed
+                    'padding:60px 50px',
                 ].join(';');
 
                 const clone = liveArea.cloneNode(true);
 
-                // Step 2 — neutralise all Tailwind transition/collapse classes on the clone.
-                // We replace the class list approach: instead inject a <style> inside the
-                // wrapper that unconditionally opens every animated panel.
+                // We do NOT force collapsed panels open here. We only make sure that panels
+                // which ARE open (max-h-[5000px]) render fully and that nothing is clipped,
+                // and we strip transitions so html2canvas captures a settled frame.
                 const overrideStyle = document.createElement('style');
                 overrideStyle.textContent = `
-                    /* Force all collapsed panels open for export */
-                    [class*="max-h-0"] { max-height: none !important; overflow: visible !important; opacity: 1 !important; display: block !important; }
-                    [class*="opacity-0"] { opacity: 1 !important; }
-                    /* Ensure absolute-positioned labels are never clipped */
+                    /* Keep already-open panels fully visible (do NOT open collapsed ones) */
+                    [class*="max-h-[5000px]"] { max-height: none !important; overflow: visible !important; opacity: 1 !important; }
+                    /* Ensure absolute-positioned labels / badges are never clipped */
                     [class*="rounded-3xl"], [class*="rounded-2xl"], [class*="rounded-xl"] { overflow: visible !important; }
-                    /* Department badge labels: keep them visible above their parent */
-                    .-top-4, .\\-top-4 { overflow: visible !important; }
-                    /* Neutralise hover/group animations that could shift layout */
+                    /* Neutralise transitions/animations so the captured frame is settled */
                     * { transition: none !important; animation: none !important; }
                 `;
                 wrapper.appendChild(overrideStyle);
                 wrapper.appendChild(clone);
                 document.body.appendChild(wrapper);
 
-                // Step 3 — force all max-h transition panels to be explicitly uncollapsed
-                // by iterating the cloned DOM and removing the collapsing classes.
+                // For panels that are currently open, expand their max-height fully so nothing clips.
+                // Collapsed panels (max-h-0 / opacity-0) are intentionally left untouched.
                 clone.querySelectorAll('*').forEach(el => {
                     const cls = el.className || '';
                     if (typeof cls !== 'string') return;
-                    // If the element is a staff-panel that uses max-h-0 collapse
-                    if (cls.includes('max-h-0') || cls.includes('opacity-0')) {
-                        el.style.maxHeight = 'none';
-                        el.style.overflow = 'visible';
-                        el.style.opacity = '1';
-                        el.style.display = '';
-                    }
-                    // If it was a previously-expanded panel (max-h-[5000px])
-                    if (cls.includes('max-h-[')) {
+                    if (cls.includes('max-h-[5000px]') || cls.includes('opacity-100')) {
                         el.style.maxHeight = 'none';
                         el.style.overflow = 'visible';
                         el.style.opacity = '1';
                     }
-                    // Cards / containers: make sure overflow visible so badges show
                     if (cls.includes('rounded-3xl') || cls.includes('rounded-2xl')) {
                         el.style.overflow = 'visible';
                     }
                 });
 
-                // Step 4 — pre-load all images in the clone to base64
                 await preloadImagesForExport(wrapper);
-                // Give browser time to repaint with updated src values
                 await new Promise(r => setTimeout(r, 400));
 
-                // Step 5 — measure the true content size
                 const contentW = wrapper.scrollWidth;
                 const contentH = wrapper.scrollHeight;
 
-                // Step 6 — capture with html2canvas at scale 2 (good quality, fast)
                 const SCALE = 2;
                 const canvas = await window.html2canvas(wrapper, {
-                    backgroundColor: '#f4f7fa',
+                    backgroundColor: '#ffffff',
                     scale: SCALE,
                     useCORS: true,
                     allowTaint: false,
@@ -315,23 +284,11 @@
                     scrollY: 0,
                     imageTimeout: 8000,
                     onclone: (clonedDoc) => {
-                        // Final safety pass on the cloned document html2canvas uses
-                        clonedDoc.querySelectorAll('*').forEach(el => {
-                            const s = el.style;
-                            if (!s) return;
-                            // Open all collapsed staff panels
-                            if (s.maxHeight === '0px' || s.maxHeight === '0') {
-                                s.maxHeight = 'none';
-                                s.overflow = 'visible';
-                                s.opacity = '1';
-                            }
-                            // Remove clip/overflow:hidden that would cut off badge labels
-                            if (s.overflow === 'hidden') s.overflow = 'visible';
-                        });
+                        // Only neutralise clipping on OPEN panels; never open collapsed ones.
                         clonedDoc.querySelectorAll('[class]').forEach(el => {
                             const cls = el.className || '';
                             if (typeof cls !== 'string') return;
-                            if (cls.includes('overflow-hidden') || cls.includes('max-h-0')) {
+                            if (cls.includes('max-h-[5000px]')) {
                                 el.style.overflow = 'visible';
                                 el.style.maxHeight = 'none';
                                 el.style.opacity = '1';
@@ -342,11 +299,43 @@
 
                 document.body.removeChild(wrapper);
 
-                // Step 7 — output
+                // ─── Fit captured chart onto an A4 page at 300 DPI on white ─────────────
+                const DPI = 300;
+                const MM_PER_INCH = 25.4;
+                const pxPerMm = DPI / MM_PER_INCH;
+
+                // Decide A4 orientation based on captured aspect ratio for best fit.
+                const captureLandscape = canvas.width >= canvas.height;
+                const pageWmm = captureLandscape ? A4.hmm : A4.wmm;
+                const pageHmm = captureLandscape ? A4.wmm : A4.hmm;
+
+                const pageWpx = Math.round(pageWmm * pxPerMm);
+                const pageHpx = Math.round(pageHmm * pxPerMm);
+
+                // Compose onto a white A4 canvas, scaling the chart to fit with a margin.
+                const MARGIN_PX = Math.round(8 * pxPerMm); // 8mm margin
+                const availW = pageWpx - MARGIN_PX * 2;
+                const availH = pageHpx - MARGIN_PX * 2;
+                const fit = Math.min(availW / canvas.width, availH / canvas.height);
+                const drawW = Math.round(canvas.width * fit);
+                const drawH = Math.round(canvas.height * fit);
+                const offX = Math.round((pageWpx - drawW) / 2);
+                const offY = Math.round((pageHpx - drawH) / 2);
+
+                const pageCanvas = document.createElement('canvas');
+                pageCanvas.width = pageWpx;
+                pageCanvas.height = pageHpx;
+                const pctx = pageCanvas.getContext('2d');
+                pctx.fillStyle = '#ffffff';
+                pctx.fillRect(0, 0, pageWpx, pageHpx);
+                pctx.imageSmoothingEnabled = true;
+                pctx.imageSmoothingQuality = 'high';
+                pctx.drawImage(canvas, offX, offY, drawW, drawH);
+
                 if (format === 'png') {
                     const link = document.createElement('a');
-                    link.download = 'ELA_Org_Chart.png';
-                    link.href = canvas.toDataURL('image/png');
+                    link.download = `${fileLabel}.png`;
+                    link.href = pageCanvas.toDataURL('image/png');
                     link.click();
                 } else if (format === 'pdf') {
                     if (!window.jspdf) {
@@ -358,34 +347,18 @@
                         });
                     }
                     const { jsPDF } = window.jspdf;
-
-                    // Canvas is at SCALE× — the "logical" pixel dimensions are:
-                    const logicalW = canvas.width / SCALE;
-                    const logicalH = canvas.height / SCALE;
-
-                    // Use 150 DPI for PDF. 1 pt = 1/72 inch. 150 px/inch → px to pt factor:
-                    const DPI = 150;
-                    const PT_PER_PX = 72 / DPI;
-                    const pageW_pt = logicalW * PT_PER_PX;
-                    const pageH_pt = logicalH * PT_PER_PX;
-
-                    const orientation = pageW_pt > pageH_pt ? 'landscape' : 'portrait';
-                    const pdf = new jsPDF({
-                        orientation,
-                        unit: 'pt',
-                        format: [pageW_pt, pageH_pt]
-                    });
-
-                    // addImage: use logical pixel dimensions for width/height in pt units
+                    const orientation = captureLandscape ? 'landscape' : 'portrait';
+                    // A4 page in mm — jsPDF native A4 format ensures correct physical print size.
+                    const pdf = new jsPDF({ orientation, unit: 'mm', format: 'a4' });
                     pdf.addImage(
-                        canvas.toDataURL('image/png'),
+                        pageCanvas.toDataURL('image/png'),
                         'PNG',
                         0, 0,
-                        pageW_pt, pageH_pt,
+                        pageWmm, pageHmm,
                         undefined,
                         'FAST'
                     );
-                    pdf.save('ELA_Org_Chart.pdf');
+                    pdf.save(`${fileLabel}.pdf`);
                 }
 
             } catch (err) {
@@ -396,7 +369,7 @@
             }
         };
 
-        const ModernOrgNode = ({ dept, manager, staffList, children, onEmployeeClick, isEditing, onEdit, onAddMenu, onDelete, isRoot, alignDrop }) => {
+        const ModernOrgNode = ({ dept, manager, staffList, children, onEmployeeClick, isEditing, onEdit, onAddMenu, onDelete, isRoot, alignDrop, exportId, onExport }) => {
             const [expanded, setExpanded] = useState(false);
             const hasChildren = React.Children.count(children) > 0;
             const hasStaff = staffList && staffList.length > 0;
@@ -453,12 +426,7 @@
                         <div className="w-[3px] h-[30px] bg-[#e2d8f0]"></div>
                     </div>
                     )}
-                    {/* 
-                        EXPORT FIX: The card wrapper must NOT have overflow:hidden — that clips
-                        the absolute-positioned department badge that sits at -top-4.
-                        We use overflow:visible here and rely on the inner rounded div for aesthetics.
-                    */}
-                    <div className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-72 transition-all duration-300 z-10 relative flex flex-col group hover:shadow-2xl hover:-translate-y-1 mx-auto" style={{overflow:'visible'}}>
+                    <div id={exportId} className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-72 transition-all duration-300 z-10 relative flex flex-col group hover:shadow-2xl hover:-translate-y-1 mx-auto" style={{overflow:'visible'}}>
                     
                     {isEditing && (
                         <div className="absolute -top-4 -right-4 flex space-x-1 z-30">
@@ -468,11 +436,22 @@
                         </div>
                     )}
 
-                    {/* Department badge — absolutely positioned above the card */}
-                    <div className="absolute -top-4 left-0 right-0 flex justify-center z-20 pointer-events-none">
-                        <div className="bg-[#292c44] text-white font-bold text-[10px] uppercase tracking-widest px-5 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30 whitespace-nowrap">
+                    {/* Department badge + export control row */}
+                    <div className="absolute -top-4 left-0 right-0 flex justify-center items-center gap-1 z-20">
+                        <div className="bg-[#292c44] text-white font-bold text-[10px] uppercase tracking-widest px-5 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30 whitespace-nowrap pointer-events-none">
                         {dept}
                         </div>
+                        {onExport && (
+                        <div className="relative group/exp pointer-events-auto export-control" data-html2canvas-ignore="true">
+                            <button onClick={(e) => e.stopPropagation()} className="bg-[#dfa634] text-white w-7 h-7 rounded-full flex items-center justify-center shadow-lg border border-white/20 hover:bg-[#c9942a] transition" title="Export this department">
+                            <Download className="w-3.5 h-3.5" />
+                            </button>
+                            <div className="absolute left-1/2 -translate-x-1/2 mt-1 w-32 bg-white border border-gray-100 rounded-xl shadow-2xl py-1.5 opacity-0 invisible group-hover/exp:opacity-100 group-hover/exp:visible transition-all z-50">
+                            <button onClick={(e) => { e.stopPropagation(); onExport('png'); }} className="block w-full text-left px-4 py-1.5 text-xs text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">PNG</button>
+                            <button onClick={(e) => { e.stopPropagation(); onExport('pdf'); }} className="block w-full text-left px-4 py-1.5 text-xs text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">PDF</button>
+                            </div>
+                        </div>
+                        )}
                     </div>
                     
                     <div 
@@ -525,6 +504,7 @@
                         <div 
                         onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
                         className="absolute -bottom-4 left-1/2 transform -translate-x-1/2 z-20 cursor-pointer"
+                        data-html2canvas-ignore="true"
                         >
                         <div className="bg-white border border-gray-200 text-gray-400 hover:text-[#4a3189] hover:border-[#4a3189] w-8 h-8 rounded-full flex items-center justify-center shadow-md transition-all hover:scale-110">
                             {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4 transform rotate-90" />}
@@ -597,6 +577,9 @@
             const [alertDialog, setAlertDialog] = useState(null);
             const [isExporting, setIsExporting] = useState(false);
 
+            // Executive Assistant management dialog state
+            const [assistantForm, setAssistantForm] = useState(null);
+
             const [orgZoomLevel, setOrgZoomLevel] = useState(0.85);
             const [orgPan, setOrgPan] = useState({ x: 0, y: 0 });
             const [isDraggingOrg, setIsDraggingOrg] = useState(false);
@@ -623,7 +606,7 @@
             };
 
             const getEmployeesInBranch = (node) => {
-                let names = [node.managerName, ...(node.staffNames || [])].filter(Boolean);
+                let names = [node.managerName, node.assistantName, ...(node.staffNames || [])].filter(Boolean);
                 if (node.children) {
                 node.children.forEach(c => { names = names.concat(getEmployeesInBranch(c)); });
                 }
@@ -653,7 +636,7 @@
             const getStaff = (names) => names.map(getEmp);
 
             const rootManager = getEmp(orgData.managerName);
-            const rootAssistant = getEmp(orgData.assistantName);
+            const rootAssistant = orgData.assistantName ? getEmp(orgData.assistantName) : null;
 
             const handlePhotoUpload = (e, empId) => {
                 const file = e.target.files[0];
@@ -721,15 +704,30 @@
                 setAlertDialog(`${newEmp.name} successfully added to the organization.`);
             };
 
+            // Save the executive assistant assignment for a given node id.
+            const handleSaveAssistant = () => {
+                if (!assistantForm) return;
+                const newTree = updateNode(orgData, assistantForm.nodeId, { assistantName: assistantForm.assistantName || null });
+                saveToCloud(newTree, null);
+                setAssistantForm(null);
+            };
+
+            // Per-department export helper. Each ModernOrgNode card carries a stable export id.
+            const exportDepartment = (node, format) => {
+                handleExport(format, setIsExporting, setAlertDialog, `dept-export-${node.id}`, `ELA_${(node.dept || 'Department').replace(/[^a-z0-9]+/gi, '_')}`);
+            };
+
             const renderOrgTree = (node, level = 1) => {
                 const manager = node.managerName ? getEmp(node.managerName) : null;
                 const staff = getStaff(node.staffNames || []);
                 return (
                 <ModernOrgNode 
                     key={node.id} dept={node.dept} manager={manager} staffList={staff} 
+                    exportId={`dept-export-${node.id}`}
+                    onExport={(fmt) => exportDepartment(node, fmt)}
                     onEmployeeClick={(emp) => { setSelectedEmployeeProfile(emp); }}
                     isEditing={isEditingOrg} isRoot={false}
-                    onEdit={() => { setEditingOrgNode(node.id); setOrgNodeForm({ id: node.id, dept: node.dept, managerName: node.managerName || '', staffNames: node.staffNames || [] }); }}
+                    onEdit={() => { setEditingOrgNode(node.id); setOrgNodeForm({ id: node.id, dept: node.dept, managerName: node.managerName || '', staffNames: node.staffNames || [], assistantName: node.assistantName || '' }); }}
                     onAddMenu={() => { setAddMenuConfig({ parentId: node.id, deptName: node.dept }); }}
                     onDelete={() => {
                         setConfirmDialog({
@@ -761,7 +759,7 @@
                     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center">
                         <Loader2 className="w-14 h-14 text-[#dfa634] animate-spin mb-5" />
                         <h2 className="text-xl font-bold text-white">Preparing Export…</h2>
-                        <p className="text-white/70 text-sm mt-2">Pre-loading images and rendering the chart. Please wait.</p>
+                        <p className="text-white/70 text-sm mt-2">Rendering current view to an A4 print-quality page. Please wait.</p>
                     </div>
                 )}
 
@@ -808,6 +806,18 @@
                             <button onClick={() => { setOrgZoomLevel(0.85); setOrgPan({ x: 0, y: 0 }); }} className="px-3 py-2 text-xs font-bold text-gray-700 hover:text-[#4a3189] transition w-16 text-center" title="Reset">{Math.round(orgZoomLevel * 100)}%</button>
                             <button onClick={() => setOrgZoomLevel(z => Math.min(z + 0.1, 2.5))} className="p-2 bg-white shadow-sm rounded-lg text-gray-600 hover:text-[#4a3189] hover:bg-purple-50 transition" title="Zoom In"><Plus className="w-4 h-4" /></button>
                         </div>
+
+                        {/* Executive Assistant management (only meaningful on Overall Structure) */}
+                        {activeOrgTab === 'Overall Structure' && (
+                            <button
+                                onClick={() => setAssistantForm({ nodeId: orgData.id, assistantName: orgData.assistantName || '' })}
+                                className="px-5 py-2.5 bg-white shadow-sm border border-gray-200 text-gray-700 rounded-xl text-sm font-bold flex items-center transition-all hover:border-[#4a3189]/50 hover:bg-purple-50/50 hover:shadow-md"
+                                title="Add or edit Executive Assistant"
+                            >
+                                <UserPlus className="w-4 h-4 mr-2 text-[#4a3189]" />
+                                {orgData.assistantName ? 'Edit Executive Assistant' : 'Add Executive Assistant'}
+                            </button>
+                        )}
                         
                         <button 
                             onClick={() => setIsEditingOrg(!isEditingOrg)} 
@@ -825,10 +835,10 @@
                                 Export
                             </button>
                             {!isExporting && (
-                                <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-100 rounded-xl shadow-2xl py-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all transform origin-top-right z-50">
-                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 pt-1 pb-2">Exports what you see on screen</p>
-                                    <button onClick={() => handleExport('png', setIsExporting, setAlertDialog)} className="block w-full text-left px-5 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">Export as PNG</button>
-                                    <button onClick={() => handleExport('pdf', setIsExporting, setAlertDialog)} className="block w-full text-left px-5 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">Export as PDF</button>
+                                <div className="absolute right-0 mt-2 w-60 bg-white border border-gray-100 rounded-xl shadow-2xl py-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all transform origin-top-right z-50">
+                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 pt-1 pb-2">Current view · A4 · 300 DPI</p>
+                                    <button onClick={() => handleExport('png', setIsExporting, setAlertDialog)} className="block w-full text-left px-5 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">Export as PNG (A4)</button>
+                                    <button onClick={() => handleExport('pdf', setIsExporting, setAlertDialog)} className="block w-full text-left px-5 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">Export as PDF (A4)</button>
                                 </div>
                             )}
                         </div>
@@ -940,17 +950,26 @@
                             {activeOrgTab === 'Overall Structure' ? (
                             <li>
                                 <div className="flex flex-col items-center">
-                                <div className="z-10 relative group cursor-pointer hover:-translate-y-1 transition-transform duration-300 mx-auto w-72" onClick={() => { setSelectedEmployeeProfile(rootManager); }}>
+                                <div id="dept-export-root" className="z-10 relative group cursor-pointer hover:-translate-y-1 transition-transform duration-300 mx-auto w-72" onClick={() => { setSelectedEmployeeProfile(rootManager); }}>
                                     {isEditingOrg && (
                                     <div className="absolute -top-4 -right-4 flex space-x-1 z-30">
                                         <button onClick={(e) => { e.stopPropagation(); setEditingOrgNode(orgData.id); setOrgNodeForm({ id: orgData.id, dept: orgData.dept, managerName: orgData.managerName || '', staffNames: orgData.staffNames || [], assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Department"><Edit className="w-3 h-3" /></button>
                                         <button onClick={(e) => { e.stopPropagation(); setAddMenuConfig({ parentId: orgData.id, deptName: orgData.dept }); }} className="bg-green-500 text-white p-2 rounded-full shadow-lg hover:bg-green-600 transition" title="Add"><Plus className="w-3 h-3" /></button>
                                     </div>
                                     )}
-                                    {/* Root dept badge */}
-                                    <div className="absolute -top-4 left-0 right-0 flex justify-center z-20 pointer-events-none">
-                                    <div className="bg-[#292c44] text-white font-bold text-[10px] uppercase tracking-widest px-5 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30 whitespace-nowrap">
+                                    {/* Root dept badge + export */}
+                                    <div className="absolute -top-4 left-0 right-0 flex justify-center items-center gap-1 z-20">
+                                    <div className="bg-[#292c44] text-white font-bold text-[10px] uppercase tracking-widest px-5 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30 whitespace-nowrap pointer-events-none">
                                         {orgData.dept}
+                                    </div>
+                                    <div className="relative group/exp pointer-events-auto" data-html2canvas-ignore="true">
+                                        <button onClick={(e) => e.stopPropagation()} className="bg-[#dfa634] text-white w-7 h-7 rounded-full flex items-center justify-center shadow-lg border border-white/20 hover:bg-[#c9942a] transition" title="Export this department">
+                                        <Download className="w-3.5 h-3.5" />
+                                        </button>
+                                        <div className="absolute left-1/2 -translate-x-1/2 mt-1 w-32 bg-white border border-gray-100 rounded-xl shadow-2xl py-1.5 opacity-0 invisible group-hover/exp:opacity-100 group-hover/exp:visible transition-all z-50">
+                                        <button onClick={(e) => { e.stopPropagation(); handleExport('png', setIsExporting, setAlertDialog, 'dept-export-root', 'ELA_Executive_Management'); }} className="block w-full text-left px-4 py-1.5 text-xs text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">PNG</button>
+                                        <button onClick={(e) => { e.stopPropagation(); handleExport('pdf', setIsExporting, setAlertDialog, 'dept-export-root', 'ELA_Executive_Management'); }} className="block w-full text-left px-4 py-1.5 text-xs text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">PDF</button>
+                                        </div>
                                     </div>
                                     </div>
                                     <div className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl pt-10 pb-5 px-6 w-72 flex items-center flex-col relative group-hover:shadow-2xl transition-all" style={{overflow:'visible'}}>
@@ -963,6 +982,8 @@
                                     </div>
                                 </div>
 
+                                {/* Executive Assistant box — full org-position behaviour */}
+                                {rootAssistant && (
                                 <div className="relative flex justify-center w-full h-24">
                                     <div className="w-[3px] h-full bg-[#e2d8f0]"></div>
                                     <div className="absolute top-1/2 right-1/2 flex items-center pr-0 transform -translate-y-1/2">
@@ -970,6 +991,13 @@
                                         onClick={() => { setSelectedEmployeeProfile(rootAssistant); }}
                                         className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-2xl p-2.5 w-56 flex items-center z-10 relative group hover:shadow-2xl hover:-translate-y-0.5 transition-all cursor-pointer"
                                         >
+                                        {isEditingOrg && (
+                                            <div className="absolute -top-3 -right-3 flex space-x-1 z-30" data-html2canvas-ignore="true">
+                                            <button onClick={(e) => { e.stopPropagation(); setAssistantForm({ nodeId: orgData.id, assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-1.5 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Executive Assistant"><Edit className="w-3 h-3" /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); setConfirmDialog({ message: `Remove ${rootAssistant.name} as Executive Assistant?`, confirmLabel: 'Remove', confirmClass: 'bg-red-500 hover:bg-red-600', onConfirm: () => { const newTree = updateNode(orgData, orgData.id, { assistantName: null }); saveToCloud(newTree, null); setConfirmDialog(null); } }); }} className="bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition" title="Remove Executive Assistant"><Trash2 className="w-3 h-3" /></button>
+                                            </div>
+                                        )}
+                                        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#4a3189] text-white text-[7px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full shadow whitespace-nowrap pointer-events-none">Executive Assistant</div>
                                         <img src={rootAssistant.profilePhoto} className="w-[56px] h-[56px] rounded-lg mr-3 object-cover shadow-sm ring-2 ring-white border border-gray-100 flex-shrink-0" alt={rootAssistant.name} />
                                         <div className="text-left overflow-hidden">
                                             <p className="text-[10px] font-extrabold text-gray-800 leading-tight group-hover:text-[#4a3189] transition-colors" style={{wordBreak:'break-word'}}>{rootAssistant.name}</p>
@@ -979,6 +1007,14 @@
                                         <div className="w-8 h-[3px] bg-[#e2d8f0]"></div>
                                     </div>
                                 </div>
+                                )}
+                                {!rootAssistant && isEditingOrg && (
+                                <div className="relative flex justify-center w-full py-4" data-html2canvas-ignore="true">
+                                    <button onClick={() => setAssistantForm({ nodeId: orgData.id, assistantName: '' })} className="px-4 py-2 bg-purple-50 text-[#4a3189] border border-dashed border-[#4a3189]/40 rounded-xl text-xs font-bold hover:bg-purple-100 transition flex items-center">
+                                    <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Add Executive Assistant
+                                    </button>
+                                </div>
+                                )}
                                 </div>
 
                                 <ul>
@@ -1187,6 +1223,35 @@
                         <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end space-x-3">
                         <button onClick={() => setNewEmployeeForm(null)} className="px-5 py-2.5 text-sm font-bold text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-xl transition">Cancel</button>
                         <button onClick={handleAddNewEmployee} className="px-6 py-2.5 text-white text-sm font-bold rounded-xl transition bg-[#dfa634] hover:bg-[#c9942a] shadow-md hover:shadow-lg">Create Employee</button>
+                        </div>
+                    </div>
+                    </div>
+                )}
+
+                {/* ─── Executive Assistant management dialog ─────────────────────────── */}
+                {assistantForm && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
+                        <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gradient-to-r from-[#292c44] to-[#3a3e5c] text-white">
+                        <h3 className="text-lg font-bold flex items-center"><UserPlus className="w-5 h-5 mr-2 text-[#dfa634]" /> Executive Assistant</h3>
+                        <button onClick={() => setAssistantForm(null)} className="text-white/60 hover:text-white transition"><X className="w-5 h-5" /></button>
+                        </div>
+                        <div className="p-6 space-y-4">
+                        <p className="text-sm text-gray-600">Assign, change, or remove the Executive Assistant reporting directly under the head of this structure.</p>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Select Executive Assistant</label>
+                            <select className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none shadow-sm transition bg-white"
+                            value={assistantForm.assistantName} onChange={(e) => setAssistantForm({...assistantForm, assistantName: e.target.value})}>
+                            <option value="">-- No Executive Assistant --</option>
+                            {allEmployeesList.map(emp => (
+                                <option key={emp.id} value={emp.name}>{emp.name} ({emp.role})</option>
+                            ))}
+                            </select>
+                        </div>
+                        </div>
+                        <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end space-x-3">
+                        <button onClick={() => setAssistantForm(null)} className="px-5 py-2.5 text-sm font-bold text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-xl transition">Cancel</button>
+                        <button onClick={handleSaveAssistant} className="px-6 py-2.5 text-white text-sm font-bold rounded-xl transition bg-[#4a3189] hover:bg-[#38236b] shadow-md hover:shadow-lg flex items-center"><Save className="w-4 h-4 mr-2" /> Save</button>
                         </div>
                     </div>
                     </div>
