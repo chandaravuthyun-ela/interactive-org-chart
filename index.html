@@ -245,8 +245,25 @@
                 await preloadImagesForExport(wrapper);
                 await new Promise(r => setTimeout(r, 400));
 
-                const contentW = wrapper.scrollWidth;
-                const contentH = wrapper.scrollHeight;
+                // Measure the true content extent, INCLUDING absolutely-positioned descendants
+                // (e.g. the Executive Assistant card that sits to the right of the head).
+                const wrapRect = wrapper.getBoundingClientRect();
+                let maxRight = wrapper.scrollWidth, maxBottom = wrapper.scrollHeight;
+                wrapper.querySelectorAll('*').forEach(el => {
+                    const r = el.getBoundingClientRect();
+                    if (r.width === 0 && r.height === 0) return;
+                    const right = (r.right - wrapRect.left);
+                    const bottom = (r.bottom - wrapRect.top);
+                    if (right > maxRight) maxRight = right;
+                    if (bottom > maxBottom) maxBottom = bottom;
+                });
+                const PAD = 40;
+                const contentW = Math.ceil(maxRight + PAD);
+                const contentH = Math.ceil(maxBottom + PAD);
+                // Lock the wrapper to the measured size so html2canvas captures everything.
+                wrapper.style.width = contentW + 'px';
+                wrapper.style.height = contentH + 'px';
+
                 const SCALE = 2;
                 const canvas = await window.html2canvas(wrapper, {
                     backgroundColor: '#ffffff', scale: SCALE, useCORS: true, allowTaint: false, logging: false,
@@ -264,35 +281,21 @@
 
                 const DPI = 300, MM_PER_INCH = 25.4;
                 const pxPerMm = DPI / MM_PER_INCH;
-                const captureLandscape = canvas.width >= canvas.height;
-                const pageWmm = captureLandscape ? A4.hmm : A4.wmm;
-                const pageHmm = captureLandscape ? A4.wmm : A4.hmm;
-                const pageWpx = Math.round(pageWmm * pxPerMm);
-                const pageHpx = Math.round(pageHmm * pxPerMm);
 
-                // FIX #3: smaller 3mm margin → larger content
-                const MARGIN_PX = Math.round(3 * pxPerMm);
-                const availW = pageWpx - MARGIN_PX * 2;
-                const availH = pageHpx - MARGIN_PX * 2;
-                const fit = Math.min(availW / canvas.width, availH / canvas.height);
-                const drawW = Math.round(canvas.width * fit);
-                const drawH = Math.round(canvas.height * fit);
-                const offX = Math.round((pageWpx - drawW) / 2);
-                const offY = Math.round((pageHpx - drawH) / 2);
-
-                const pageCanvas = document.createElement('canvas');
-                pageCanvas.width = pageWpx; pageCanvas.height = pageHpx;
-                const pctx = pageCanvas.getContext('2d');
-                pctx.fillStyle = '#ffffff';
-                pctx.fillRect(0, 0, pageWpx, pageHpx);
-                pctx.imageSmoothingEnabled = true;
-                pctx.imageSmoothingQuality = 'high';
-                pctx.drawImage(canvas, offX, offY, drawW, drawH);
+                // White-backed full-resolution canvas of exactly what is on screen (no shrink, no crop).
+                const fullCanvas = document.createElement('canvas');
+                fullCanvas.width = canvas.width;
+                fullCanvas.height = canvas.height;
+                const fctx = fullCanvas.getContext('2d');
+                fctx.fillStyle = '#ffffff';
+                fctx.fillRect(0, 0, fullCanvas.width, fullCanvas.height);
+                fctx.drawImage(canvas, 0, 0);
 
                 if (format === 'png') {
+                    // Export the full chart at native resolution — pixel-for-pixel what is shown.
                     const link = document.createElement('a');
                     link.download = `${fileLabel}.png`;
-                    link.href = pageCanvas.toDataURL('image/png');
+                    link.href = fullCanvas.toDataURL('image/png');
                     link.click();
                 } else if (format === 'pdf') {
                     if (!window.jspdf) {
@@ -304,9 +307,44 @@
                         });
                     }
                     const { jsPDF } = window.jspdf;
-                    const orientation = captureLandscape ? 'landscape' : 'portrait';
-                    const pdf = new jsPDF({ orientation, unit: 'mm', format: 'a4' });
-                    pdf.addImage(pageCanvas.toDataURL('image/png'), 'PNG', 0, 0, pageWmm, pageHmm, undefined, 'FAST');
+
+                    // Choose orientation by the chart's aspect ratio so the content uses the page best.
+                    const chartLandscape = fullCanvas.width >= fullCanvas.height;
+                    const pageWmm = chartLandscape ? A4.hmm : A4.wmm;
+                    const pageHmm = chartLandscape ? A4.wmm : A4.hmm;
+                    const MARGIN_MM = 5;
+                    const printWmm = pageWmm - MARGIN_MM * 2;
+                    const printHmm = pageHmm - MARGIN_MM * 2;
+
+                    // Scale so the chart fills the printable WIDTH (keeps cards/text at a readable size),
+                    // then tile vertically across as many pages as needed — nothing is cropped or squashed.
+                    const mmPerPx = printWmm / fullCanvas.width;     // chart px → page mm (width-fit)
+                    const fullHmm = fullCanvas.height * mmPerPx;     // total height in mm at that scale
+
+                    const pdf = new jsPDF({ orientation: chartLandscape ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
+
+                    if (fullHmm <= printHmm) {
+                        // Fits on a single page — center vertically.
+                        const offY = MARGIN_MM + (printHmm - fullHmm) / 2;
+                        pdf.addImage(fullCanvas.toDataURL('image/png'), 'PNG', MARGIN_MM, offY, printWmm, fullHmm, undefined, 'FAST');
+                    } else {
+                        // Multi-page: slice the chart canvas into page-height bands.
+                        const bandPx = Math.floor(printHmm / mmPerPx);   // chart px per page band
+                        const pages = Math.ceil(fullCanvas.height / bandPx);
+                        for (let p = 0; p < pages; p++) {
+                            const sy = p * bandPx;
+                            const sh = Math.min(bandPx, fullCanvas.height - sy);
+                            const band = document.createElement('canvas');
+                            band.width = fullCanvas.width;
+                            band.height = sh;
+                            const bctx = band.getContext('2d');
+                            bctx.fillStyle = '#ffffff';
+                            bctx.fillRect(0, 0, band.width, band.height);
+                            bctx.drawImage(fullCanvas, 0, sy, fullCanvas.width, sh, 0, 0, band.width, sh);
+                            if (p > 0) pdf.addPage('a4', chartLandscape ? 'landscape' : 'portrait');
+                            pdf.addImage(band.toDataURL('image/png'), 'PNG', MARGIN_MM, MARGIN_MM, printWmm, sh * mmPerPx, undefined, 'FAST');
+                        }
+                    }
                     pdf.save(`${fileLabel}.pdf`);
                 }
             } catch (err) {
@@ -715,7 +753,7 @@
                 setAssistantForm(null);
             };
 
-            // Strip all people from a tree but keep the department/structure skeleton.
+            // Strip all people from a tree but keep the department/structure skeleton (names/photos/positions empty).
             const blankifyTree = (node, isRoot = false) => {
                 const fresh = {
                     id: isRoot ? 'root' : `node_${Math.random().toString(36).slice(2, 9)}`,
@@ -728,12 +766,17 @@
                 return fresh;
             };
 
-            // Create a new chart. mode 'blank' = single empty root; mode 'template' = clone the
-            // CURRENT chart's department layout with all people removed. Reuses the shared card library.
-            const createChart = (name, mode = 'blank') => {
+            // Create a new chart.
+            //  mode 'default'  → clone the DEFAULT org structure (departments preserved) with all people blank.
+            //  mode 'current'  → clone the CURRENTLY shown chart's structure with all people blank.
+            //  mode 'blank'    → a single empty root only.
+            // All modes reuse the shared card library.
+            const createChart = (name, mode = 'default') => {
                 const id = `chart_${Date.now().toString(36)}`;
                 let tree;
-                if (mode === 'template') {
+                if (mode === 'default') {
+                    tree = blankifyTree(defaultOrgData, true);
+                } else if (mode === 'current') {
                     tree = blankifyTree(orgData, true);
                 } else {
                     tree = { id: 'root', dept: 'Executive Management', managerName: null, assistantName: null, staffNames: [], children: [] };
@@ -891,7 +934,7 @@
                             </button>
                             {!isExporting && (
                                 <div className="absolute right-0 mt-2 w-60 bg-white border border-gray-100 rounded-xl shadow-2xl py-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all transform origin-top-right z-50">
-                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 pt-1 pb-2">Current view · A4 · 300 DPI</p>
+                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 pt-1 pb-2">Full size · no cropping · PDF tiles to A4</p>
                                     <button onClick={() => handleExport('png', setIsExporting, setAlertDialog, 'org-chart-export-area', (charts[activeChartId]?.name||'Org').replace(/[^a-z0-9]+/gi,'_'))} className="block w-full text-left px-5 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">Export as PNG (A4)</button>
                                     <button onClick={() => handleExport('pdf', setIsExporting, setAlertDialog, 'org-chart-export-area', (charts[activeChartId]?.name||'Org').replace(/[^a-z0-9]+/gi,'_'))} className="block w-full text-left px-5 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">Export as PDF (A4)</button>
                                 </div>
@@ -978,6 +1021,8 @@
                             (orgData.managerName || (orgData.children && orgData.children.length)) ? (
                             <li>
                                 <div className="flex flex-col items-center">
+                                {/* Head (Country Director) with Executive Assistant to the RIGHT, joined by a reporting line */}
+                                <div className="relative flex justify-center w-full">
                                 <div id="dept-export-root" className="z-10 relative group cursor-pointer hover:-translate-y-1 transition-transform duration-300 mx-auto w-72" onClick={() => { if(rootManager) { setSelectedEmployeeProfile(rootManager); setPendingPhoto(null); } }}>
                                     {isEditingOrg && (
                                     <div className="absolute -top-4 -right-4 flex space-x-1 z-30" data-html2canvas-ignore="true">
@@ -1010,14 +1055,14 @@
                                         {isEditingOrg && <button onClick={(e)=>{e.stopPropagation(); setEditingOrgNode(orgData.id); setOrgNodeForm({ id: orgData.id, dept: orgData.dept, managerName: '', staffNames: orgData.staffNames || [], assistantName: orgData.assistantName || '' });}} className="mt-2 text-xs font-bold text-[#4a3189]">Assign head</button>}
                                     </div>
                                     )}
-                                </div>
 
-                                {/* Executive Assistant box — stacked directly below the head, in normal flow (no overlap) */}
-                                {rootAssistant && (
-                                <div className="flex flex-col items-center w-full mt-8">
-                                    <div className="w-[3px] h-10 bg-[#e2d8f0]"></div>
-                                    <div onClick={() => { setSelectedEmployeeProfile(rootAssistant); setPendingPhoto(null); }}
-                                    className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-72 flex flex-col items-center z-10 relative group hover:shadow-2xl hover:-translate-y-1 transition-all cursor-pointer pt-9 pb-5 px-5 mt-2" style={{overflow:'visible'}}>
+                                    {/* Executive Assistant — positioned to the RIGHT of the head, joined by a horizontal reporting line */}
+                                    {rootAssistant && (
+                                    <div className="absolute top-1/2 left-full -translate-y-1/2 flex items-center" style={{zIndex:15}}>
+                                        {/* horizontal reporting line */}
+                                        <div className="h-[3px] w-12 bg-[#e2d8f0]"></div>
+                                        <div onClick={(e) => { e.stopPropagation(); setSelectedEmployeeProfile(rootAssistant); setPendingPhoto(null); }}
+                                        className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-72 flex flex-col items-center relative group/ea hover:shadow-2xl hover:-translate-y-1 transition-all cursor-pointer pt-10 pb-5 px-5" style={{overflow:'visible'}}>
                                         {isEditingOrg && (
                                             <div className="absolute -top-4 -right-4 flex space-x-1 z-30" data-html2canvas-ignore="true">
                                             <button onClick={(e) => { e.stopPropagation(); setAssistantForm({ nodeId: orgData.id, assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Executive Assistant"><Edit className="w-3 h-3" /></button>
@@ -1027,22 +1072,26 @@
                                         <div className="absolute -top-4 left-0 right-0 flex justify-center z-20 pointer-events-none">
                                             <div className="bg-[#4a3189] text-white text-[9px] font-bold uppercase tracking-widest px-4 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30 whitespace-nowrap">Executive Assistant</div>
                                         </div>
-                                        <div className="relative mb-3 group-hover:scale-105 transition-transform duration-300" style={{width:'120px'}}>
-                                            <div className="absolute inset-0 bg-[#dfa634] rounded-xl blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
+                                        <div className="relative mb-3 group-hover/ea:scale-105 transition-transform duration-300" style={{width:'120px'}}>
+                                            <div className="absolute inset-0 bg-[#dfa634] rounded-xl blur-md opacity-20 group-hover/ea:opacity-40 transition-opacity"></div>
                                             <img src={rootAssistant.profilePhoto} className="relative w-[120px] h-[180px] rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootAssistant.name} />
                                         </div>
-                                        <p className="text-sm font-extrabold text-gray-800 w-full text-center leading-snug group-hover:text-[#4a3189] transition-colors break-words">{rootAssistant.name}</p>
+                                        <p className="text-sm font-extrabold text-gray-800 w-full text-center leading-snug group-hover/ea:text-[#4a3189] transition-colors break-words">{rootAssistant.name}</p>
                                         <p className="text-[10px] font-bold text-[#dfa634] w-full text-center mt-1 uppercase tracking-wide leading-snug break-words line-clamp-2">{rootAssistant.role}</p>
+                                        </div>
                                     </div>
+                                    )}
+                                    {!rootAssistant && isEditingOrg && (
+                                    <div className="absolute top-1/2 left-full -translate-y-1/2 flex items-center" data-html2canvas-ignore="true">
+                                        <div className="h-[3px] w-12 bg-[#e2d8f0]"></div>
+                                        <button onClick={(e) => { e.stopPropagation(); setAssistantForm({ nodeId: orgData.id, assistantName: '' }); }} className="px-4 py-3 bg-purple-50 text-[#4a3189] border border-dashed border-[#4a3189]/40 rounded-xl text-xs font-bold hover:bg-purple-100 transition flex items-center whitespace-nowrap">
+                                        <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Add Executive Assistant
+                                        </button>
+                                    </div>
+                                    )}
                                 </div>
-                                )}
-                                {!rootAssistant && isEditingOrg && (
-                                <div className="relative flex justify-center w-full py-6 mt-4" data-html2canvas-ignore="true">
-                                    <button onClick={() => setAssistantForm({ nodeId: orgData.id, assistantName: '' })} className="px-4 py-2 bg-purple-50 text-[#4a3189] border border-dashed border-[#4a3189]/40 rounded-xl text-xs font-bold hover:bg-purple-100 transition flex items-center">
-                                    <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Add Executive Assistant
-                                    </button>
                                 </div>
-                                )}
+
                                 </div>
 
                                 <ul>{orgData.children.map(child => renderOrgTree(child, 1))}</ul>
@@ -1183,14 +1232,17 @@
                         </div>
                         <div className="p-6 space-y-3">
                             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">Organization / Company Name</label>
-                            <input autoFocus value={newChartName} onChange={(e)=>setNewChartName(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter' && newChartName.trim()) createChart(newChartName.trim(), 'blank'); }} placeholder="e.g. Acme Corp" className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none" />
-                            <p className="text-xs text-gray-500">Both options reuse the same shared card library, so you can drop existing people straight in.</p>
+                            <input autoFocus value={newChartName} onChange={(e)=>setNewChartName(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter' && newChartName.trim()) createChart(newChartName.trim(), 'default'); }} placeholder="e.g. Acme Corp" className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none" />
+                            <p className="text-xs text-gray-500">Pick a starting point. All options reuse the shared card library, and you can freely add or remove departments and cards afterward.</p>
                         </div>
                         <div className="p-5 border-t border-gray-100 bg-gray-50 flex flex-col gap-2">
-                            <button disabled={!newChartName.trim()} onClick={() => createChart(newChartName.trim(), 'template')} className="w-full px-6 py-3 text-white text-sm font-bold rounded-xl transition bg-[#4a3189] hover:bg-[#38236b] shadow-md disabled:opacity-50 flex items-center justify-center">
-                                <Network className="w-4 h-4 mr-2" /> Use current layout as template
+                            <button disabled={!newChartName.trim()} onClick={() => createChart(newChartName.trim(), 'default')} className="w-full px-6 py-3 text-white text-sm font-bold rounded-xl transition bg-[#4a3189] hover:bg-[#38236b] shadow-md disabled:opacity-50 flex items-center justify-center">
+                                <Network className="w-4 h-4 mr-2" /> Default structure (blank cards)
                             </button>
-                            <button disabled={!newChartName.trim()} onClick={() => createChart(newChartName.trim(), 'blank')} className="w-full px-6 py-3 text-[#4a3189] text-sm font-bold rounded-xl transition bg-white border border-[#4a3189]/30 hover:bg-purple-50 disabled:opacity-50 flex items-center justify-center">
+                            <button disabled={!newChartName.trim()} onClick={() => createChart(newChartName.trim(), 'current')} className="w-full px-6 py-3 text-[#4a3189] text-sm font-bold rounded-xl transition bg-white border border-[#4a3189]/30 hover:bg-purple-50 disabled:opacity-50 flex items-center justify-center">
+                                <Copy className="w-4 h-4 mr-2" /> Copy current chart's structure
+                            </button>
+                            <button disabled={!newChartName.trim()} onClick={() => createChart(newChartName.trim(), 'blank')} className="w-full px-6 py-3 text-gray-600 text-sm font-bold rounded-xl transition bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-50 flex items-center justify-center">
                                 <FolderPlus className="w-4 h-4 mr-2" /> Start completely blank
                             </button>
                             <button onClick={() => setNewChartName(null)} className="w-full px-5 py-2 text-sm font-bold text-gray-500 hover:text-gray-800 transition">Cancel</button>
