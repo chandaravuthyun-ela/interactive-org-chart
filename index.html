@@ -4,15 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Interactive Org Chart</title>
-    
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <!-- FIREBASE CLOUD DATABASE SETUP -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
         const firebaseConfig = {
             // apiKey: "...",
             // authDomain: "...",
@@ -30,10 +30,14 @@
             window.firebaseReady = false;
             console.warn("⚠️ Firebase is not configured! Running in local temporary memory mode.");
         }
-        
+
         window.doc = doc;
         window.setDoc = setDoc;
+        window.getDoc = getDoc;
         window.onSnapshot = onSnapshot;
+        window.fbCollection = collection;
+        window.getDocs = getDocs;
+        window.deleteDoc = deleteDoc;
     </script>
 
     <script type="importmap">
@@ -50,11 +54,12 @@
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
-        import React, { useState, useEffect, useMemo } from 'react';
+        import React, { useState, useEffect, useMemo, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
-        import { 
+        import {
             ChevronDown, ChevronRight, Plus, X, Trash2, Edit,
-            Download, Building, Users, Network, Briefcase, Minus, User, Mail, Phone, Calendar, Save, Camera, UserPlus, Image as ImageIcon, Loader2
+            Download, Building, Users, Network, Briefcase, Minus, User, Mail, Phone, Calendar, Save, Camera, UserPlus, Image as ImageIcon, Loader2,
+            GripVertical, LayoutGrid, FolderPlus, Library, Copy, Check
         } from 'lucide-react';
 
         const defaultRawData = [
@@ -106,7 +111,7 @@
             const names = emp.name.split(' ');
             const familyName = names.pop();
             const givenName = names.join(' ');
-            const branchOffice = (emp.name === "Malish VANN" || emp.name === "Vothana CHHOEURY") 
+            const branchOffice = (emp.name === "Malish VANN" || emp.name === "Vothana CHHOEURY")
                 ? "Siem Reap Branch" : "Phnom Penh HQ";
 
             return {
@@ -147,6 +152,7 @@
             ]
         };
 
+        // Image resize/compress for upload
         const processImageFile = (file, callback) => {
             if (!file) return;
             const reader = new FileReader();
@@ -171,7 +177,6 @@
             reader.readAsDataURL(file);
         };
 
-        // ─── ROBUST IMAGE PRE-LOADER ────────────────────────────────────────────────
         const preloadImagesForExport = async (element) => {
             const imgs = Array.from(element.querySelectorAll('img'));
             await Promise.all(imgs.map(img => new Promise(resolve => {
@@ -184,7 +189,7 @@
                     canvas.width = image.naturalWidth || 150;
                     canvas.height = image.naturalHeight || 150;
                     ctx.drawImage(image, 0, 0);
-                    try { img.src = canvas.toDataURL('image/jpeg', 0.9); } catch (e) { /* tainted — leave */ }
+                    try { img.src = canvas.toDataURL('image/jpeg', 0.9); } catch (e) { /* tainted */ }
                     resolve();
                 };
                 image.onerror = () => resolve();
@@ -193,13 +198,9 @@
         };
 
         // ─── EXPORT WORKER ──────────────────────────────────────────────────────────
-        // Exports EXACTLY what is currently on screen (the user's current expand/collapse
-        // state is preserved — no panels are force-opened). Output is fitted onto an A4
-        // page at print resolution (300 DPI) on a pure white background.
-        //
-        //  - sourceId: the DOM id of the element to capture. Defaults to the whole chart.
-        //  - format: 'png' | 'pdf'
-        const A4 = { wmm: 210, hmm: 297 }; // A4 portrait in millimetres
+        // Exports current view onto an A4 page at 300 DPI, pure-white background.
+        // FIX #3: margins reduced to 3mm so content fills more of the page.
+        const A4 = { wmm: 210, hmm: 297 };
 
         const handleExport = async (format, setIsExporting, setAlertDialog, sourceId = 'org-chart-export-area', fileLabel = 'ELA_Org_Chart') => {
             setIsExporting(true);
@@ -212,53 +213,33 @@
                         document.head.appendChild(s);
                     });
                 }
-
                 const liveArea = document.getElementById(sourceId);
                 if (!liveArea) throw new Error('Chart element not found');
 
-                // Clone the live area off-screen, preserving its CURRENT expand/collapse state.
                 const wrapper = document.createElement('div');
                 wrapper.style.cssText = [
-                    'position:fixed',
-                    'top:-99999px',
-                    'left:-99999px',
-                    'z-index:-9999',
-                    'background:#ffffff',
-                    'overflow:visible',
-                    'padding:60px 50px',
+                    'position:fixed','top:-99999px','left:-99999px','z-index:-9999',
+                    'background:#ffffff','overflow:visible','padding:40px 30px',
                 ].join(';');
 
                 const clone = liveArea.cloneNode(true);
-
-                // We do NOT force collapsed panels open here. We only make sure that panels
-                // which ARE open (max-h-[5000px]) render fully and that nothing is clipped,
-                // and we strip transitions so html2canvas captures a settled frame.
                 const overrideStyle = document.createElement('style');
                 overrideStyle.textContent = `
-                    /* Keep already-open panels fully visible (do NOT open collapsed ones) */
                     [class*="max-h-[5000px]"] { max-height: none !important; overflow: visible !important; opacity: 1 !important; }
-                    /* Ensure absolute-positioned labels / badges are never clipped */
                     [class*="rounded-3xl"], [class*="rounded-2xl"], [class*="rounded-xl"] { overflow: visible !important; }
-                    /* Neutralise transitions/animations so the captured frame is settled */
                     * { transition: none !important; animation: none !important; }
                 `;
                 wrapper.appendChild(overrideStyle);
                 wrapper.appendChild(clone);
                 document.body.appendChild(wrapper);
 
-                // For panels that are currently open, expand their max-height fully so nothing clips.
-                // Collapsed panels (max-h-0 / opacity-0) are intentionally left untouched.
                 clone.querySelectorAll('*').forEach(el => {
                     const cls = el.className || '';
                     if (typeof cls !== 'string') return;
                     if (cls.includes('max-h-[5000px]') || cls.includes('opacity-100')) {
-                        el.style.maxHeight = 'none';
-                        el.style.overflow = 'visible';
-                        el.style.opacity = '1';
+                        el.style.maxHeight = 'none'; el.style.overflow = 'visible'; el.style.opacity = '1';
                     }
-                    if (cls.includes('rounded-3xl') || cls.includes('rounded-2xl')) {
-                        el.style.overflow = 'visible';
-                    }
+                    if (cls.includes('rounded-3xl') || cls.includes('rounded-2xl')) el.style.overflow = 'visible';
                 });
 
                 await preloadImagesForExport(wrapper);
@@ -266,54 +247,31 @@
 
                 const contentW = wrapper.scrollWidth;
                 const contentH = wrapper.scrollHeight;
-
                 const SCALE = 2;
                 const canvas = await window.html2canvas(wrapper, {
-                    backgroundColor: '#ffffff',
-                    scale: SCALE,
-                    useCORS: true,
-                    allowTaint: false,
-                    logging: false,
-                    width: contentW,
-                    height: contentH,
-                    windowWidth: contentW,
-                    windowHeight: contentH,
-                    x: 0,
-                    y: 0,
-                    scrollX: 0,
-                    scrollY: 0,
-                    imageTimeout: 8000,
+                    backgroundColor: '#ffffff', scale: SCALE, useCORS: true, allowTaint: false, logging: false,
+                    width: contentW, height: contentH, windowWidth: contentW, windowHeight: contentH,
+                    x: 0, y: 0, scrollX: 0, scrollY: 0, imageTimeout: 8000,
                     onclone: (clonedDoc) => {
-                        // Only neutralise clipping on OPEN panels; never open collapsed ones.
                         clonedDoc.querySelectorAll('[class]').forEach(el => {
                             const cls = el.className || '';
                             if (typeof cls !== 'string') return;
-                            if (cls.includes('max-h-[5000px]')) {
-                                el.style.overflow = 'visible';
-                                el.style.maxHeight = 'none';
-                                el.style.opacity = '1';
-                            }
+                            if (cls.includes('max-h-[5000px]')) { el.style.overflow='visible'; el.style.maxHeight='none'; el.style.opacity='1'; }
                         });
                     }
                 });
-
                 document.body.removeChild(wrapper);
 
-                // ─── Fit captured chart onto an A4 page at 300 DPI on white ─────────────
-                const DPI = 300;
-                const MM_PER_INCH = 25.4;
+                const DPI = 300, MM_PER_INCH = 25.4;
                 const pxPerMm = DPI / MM_PER_INCH;
-
-                // Decide A4 orientation based on captured aspect ratio for best fit.
                 const captureLandscape = canvas.width >= canvas.height;
                 const pageWmm = captureLandscape ? A4.hmm : A4.wmm;
                 const pageHmm = captureLandscape ? A4.wmm : A4.hmm;
-
                 const pageWpx = Math.round(pageWmm * pxPerMm);
                 const pageHpx = Math.round(pageHmm * pxPerMm);
 
-                // Compose onto a white A4 canvas, scaling the chart to fit with a margin.
-                const MARGIN_PX = Math.round(8 * pxPerMm); // 8mm margin
+                // FIX #3: smaller 3mm margin → larger content
+                const MARGIN_PX = Math.round(3 * pxPerMm);
                 const availW = pageWpx - MARGIN_PX * 2;
                 const availH = pageHpx - MARGIN_PX * 2;
                 const fit = Math.min(availW / canvas.width, availH / canvas.height);
@@ -323,8 +281,7 @@
                 const offY = Math.round((pageHpx - drawH) / 2);
 
                 const pageCanvas = document.createElement('canvas');
-                pageCanvas.width = pageWpx;
-                pageCanvas.height = pageHpx;
+                pageCanvas.width = pageWpx; pageCanvas.height = pageHpx;
                 const pctx = pageCanvas.getContext('2d');
                 pctx.fillStyle = '#ffffff';
                 pctx.fillRect(0, 0, pageWpx, pageHpx);
@@ -348,19 +305,10 @@
                     }
                     const { jsPDF } = window.jspdf;
                     const orientation = captureLandscape ? 'landscape' : 'portrait';
-                    // A4 page in mm — jsPDF native A4 format ensures correct physical print size.
                     const pdf = new jsPDF({ orientation, unit: 'mm', format: 'a4' });
-                    pdf.addImage(
-                        pageCanvas.toDataURL('image/png'),
-                        'PNG',
-                        0, 0,
-                        pageWmm, pageHmm,
-                        undefined,
-                        'FAST'
-                    );
+                    pdf.addImage(pageCanvas.toDataURL('image/png'), 'PNG', 0, 0, pageWmm, pageHmm, undefined, 'FAST');
                     pdf.save(`${fileLabel}.pdf`);
                 }
-
             } catch (err) {
                 console.error('Export failed:', err);
                 setAlertDialog('Export failed: ' + err.message + '. Please check the browser console for details.');
@@ -369,8 +317,36 @@
             }
         };
 
-        const ModernOrgNode = ({ dept, manager, staffList, children, onEmployeeClick, isEditing, onEdit, onAddMenu, onDelete, isRoot, alignDrop, exportId, onExport }) => {
+        // Reusable staff card (FIX #5: large photo fills the card; FIX #2: clean text fit; FIX #6: drag handle)
+        const StaffCard = ({ s, onClick, draggable, onDragStart, onDragOver, onDrop, onDragEnd, isDragging, isDragOver }) => (
+            <div
+                draggable={draggable}
+                onDragStart={onDragStart}
+                onDragOver={onDragOver}
+                onDrop={onDrop}
+                onDragEnd={onDragEnd}
+                onClick={(e) => { e.stopPropagation(); if (onClick) onClick(s); }}
+                className={`relative bg-white border shadow-sm rounded-xl flex items-center w-[240px] cursor-pointer transition-all group/staff overflow-hidden
+                    ${isDragOver ? 'border-[#4a3189] ring-2 ring-[#4a3189]/40' : 'border-gray-200/80 hover:border-[#dfa634]/60 hover:shadow-md'}
+                    ${isDragging ? 'opacity-40' : ''}`}
+            >
+                {draggable && (
+                    <div className="flex-shrink-0 w-6 self-stretch flex items-center justify-center bg-gray-50 border-r border-gray-100 text-gray-300 group-hover/staff:text-[#4a3189] cursor-grab active:cursor-grabbing" title="Drag to reorder" data-html2canvas-ignore="true">
+                        <GripVertical className="w-4 h-4" />
+                    </div>
+                )}
+                <img src={s.profilePhoto} className="w-[72px] h-[72px] object-cover flex-shrink-0 ring-1 ring-gray-100 group-hover/staff:brightness-105 transition-all" alt={s.name} />
+                <div className="flex-1 min-w-0 px-3 py-2 text-left">
+                    <p className="text-[12px] font-extrabold text-gray-800 leading-snug truncate group-hover/staff:text-[#4a3189]" title={s.name}>{s.name}</p>
+                    <p className="text-[9px] font-medium text-[#dfa634] leading-snug line-clamp-2 mt-0.5" title={s.role}>{s.role}</p>
+                </div>
+            </div>
+        );
+
+        const ModernOrgNode = ({ node, dept, manager, staffList, children, onEmployeeClick, isEditing, onEdit, onAddMenu, onDelete, isRoot, alignDrop, exportId, onExport, onReorderStaff }) => {
             const [expanded, setExpanded] = useState(false);
+            const [dragIdx, setDragIdx] = useState(null);
+            const [overIdx, setOverIdx] = useState(null);
             const hasChildren = React.Children.count(children) > 0;
             const hasStaff = staffList && staffList.length > 0;
             const isEmptyNode = !manager && !hasStaff;
@@ -395,28 +371,6 @@
                 )
             }
 
-            const topTier = [];
-            const midTier = [];
-            const lowTier = [];
-
-            if (hasStaff) {
-                staffList.forEach(s => {
-                const role = (s.role || '').toLowerCase();
-                if (role.includes('lead') || role.includes('senior') || role.includes('manager') || role.includes('head') || role.includes('director') || role.includes('coordinator')) {
-                    topTier.push(s);
-                } else if (role.includes('junior') || role.includes('assistant') || role.includes('intern')) {
-                    lowTier.push(s);
-                } else {
-                    midTier.push(s);
-                }
-                });
-            }
-
-            const tiers = [];
-            if (topTier.length > 0) tiers.push({ name: 'Leads & Seniors', data: topTier });
-            if (midTier.length > 0) tiers.push({ name: 'Core Staff', data: midTier });
-            if (lowTier.length > 0) tiers.push({ name: 'Juniors & Support', data: lowTier });
-
             return (
                 <li>
                 <div className="flex flex-col items-center">
@@ -427,16 +381,16 @@
                     </div>
                     )}
                     <div id={exportId} className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-72 transition-all duration-300 z-10 relative flex flex-col group hover:shadow-2xl hover:-translate-y-1 mx-auto" style={{overflow:'visible'}}>
-                    
+
                     {isEditing && (
-                        <div className="absolute -top-4 -right-4 flex space-x-1 z-30">
+                        <div className="absolute -top-4 -right-4 flex space-x-1 z-30" data-html2canvas-ignore="true">
                         <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Department"><Edit className="w-3 h-3" /></button>
                         <button onClick={(e) => { e.stopPropagation(); onAddMenu(); }} className="bg-green-500 text-white p-2 rounded-full shadow-lg hover:bg-green-600 transition" title="Add Sub-Department or Staff"><Plus className="w-3 h-3" /></button>
                         {!isRoot && <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="bg-red-500 text-white p-2 rounded-full shadow-lg hover:bg-red-600 transition" title="Delete Department"><Trash2 className="w-3 h-3" /></button>}
                         </div>
                     )}
 
-                    {/* Department badge + export control row */}
+                    {/* Department badge + export */}
                     <div className="absolute -top-4 left-0 right-0 flex justify-center items-center gap-1 z-20">
                         <div className="bg-[#292c44] text-white font-bold text-[10px] uppercase tracking-widest px-5 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30 whitespace-nowrap pointer-events-none">
                         {dept}
@@ -453,55 +407,65 @@
                         </div>
                         )}
                     </div>
-                    
-                    <div 
+
+                    {/* Manager (FIX #5: larger photo, FIX #2: clean text) */}
+                    <div
                         onClick={(e) => { e.stopPropagation(); if(manager && onEmployeeClick) onEmployeeClick(manager); }}
-                        className={`pt-10 pb-5 px-6 flex flex-col items-center rounded-t-3xl ${manager ? 'cursor-pointer' : ''}`}
+                        className={`pt-10 pb-5 px-5 flex flex-col items-center rounded-t-3xl ${manager ? 'cursor-pointer' : ''}`}
                     >
                         {manager ? (
                         <>
-                            <div className="relative mb-3 group-hover:scale-105 transition-transform duration-300">
-                            <div className="absolute inset-0 bg-[#dfa634] rounded-xl blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
-                            <img src={manager.profilePhoto} className="relative w-[90px] h-[90px] rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={manager.name} />
+                            <div className="relative mb-3 group-hover:scale-105 transition-transform duration-300 w-full">
+                            <div className="absolute inset-0 bg-[#dfa634] rounded-2xl blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
+                            <img src={manager.profilePhoto} className="relative w-full h-[150px] rounded-2xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={manager.name} />
                             </div>
-                            <p className="text-sm font-extrabold text-gray-800 w-full text-center leading-tight group-hover:text-[#4a3189] transition-colors" style={{wordBreak:'break-word'}}>{manager.name}</p>
-                            <p className="text-[10px] font-bold text-[#dfa634] w-full text-center mt-1 uppercase tracking-wider leading-tight" style={{wordBreak:'break-word'}}>{manager.role}</p>
+                            <p className="text-sm font-extrabold text-gray-800 w-full text-center leading-snug group-hover:text-[#4a3189] transition-colors break-words">{manager.name}</p>
+                            <p className="text-[10px] font-bold text-[#dfa634] w-full text-center mt-1 uppercase tracking-wide leading-snug break-words line-clamp-2">{manager.role}</p>
                         </>
                         ) : null}
                     </div>
 
-                    {/* Staff panel */}
+                    {/* Staff panel — FIX #6: single vertical column, drag to reorder */}
                     {hasStaff && (
                         <div className={`transition-all duration-300 ease-in-out ${expanded ? 'max-h-[5000px] opacity-100' : 'max-h-0 opacity-0'}`} style={{overflow: expanded ? 'visible' : 'hidden'}}>
-                        <div className="flex flex-col items-center w-full px-3 pb-8 pt-0 border-t border-gray-100/60 bg-gray-50/50 rounded-b-3xl">
-                            {tiers.map((tier, tIndex) => (
-                            <div key={tIndex} className="flex flex-col items-center w-full">
-                                <div className="flex flex-col items-center">
-                                <div className="w-[2px] h-6 bg-gradient-to-b from-[#4a3189]/40 to-[#4a3189]/10"></div>
-                                <ChevronDown className="w-4 h-4 text-[#4a3189]/40 -mt-1.5" />
+                        <div className="flex flex-col items-center w-full px-3 pb-8 pt-4 border-t border-gray-100/60 bg-gray-50/50 rounded-b-3xl">
+                            {isEditing && (
+                                <div className="text-[9px] font-bold text-[#4a3189] uppercase tracking-widest mb-3 bg-purple-100/50 px-3 py-1 rounded-full border border-purple-200/50" data-html2canvas-ignore="true">
+                                    Drag to set reporting order
                                 </div>
-                                <span className="text-[9px] font-bold text-[#4a3189] uppercase tracking-widest mb-3 text-center bg-purple-100/50 px-3 py-1 rounded-full border border-purple-200/50 shadow-sm">{tier.name}</span>
-                                <div className="flex flex-wrap justify-center gap-3 px-1">
-                                {tier.data.map((s, idx) => (
-                                    <div 
-                                    key={idx} 
-                                    onClick={(e) => { e.stopPropagation(); if(onEmployeeClick) onEmployeeClick(s); }}
-                                    className="bg-white border border-gray-200/80 shadow-sm rounded-xl p-3 flex flex-col items-center w-[110px] hover:border-[#dfa634]/60 hover:shadow-md cursor-pointer transition-all hover:-translate-y-1 group/staff"
-                                    >
-                                    <img src={s.profilePhoto} className="w-[84px] h-[84px] rounded-xl mb-2 object-cover shadow-sm ring-2 ring-gray-50 group-hover/staff:ring-[#dfa634]/30 transition-all" alt={s.name} />
-                                    <p className="text-[10px] font-extrabold text-gray-800 text-center leading-tight w-full group-hover/staff:text-[#4a3189]" style={{wordBreak:'break-word'}}>{s.name}</p>
-                                    <p className="text-[8px] font-medium text-[#dfa634] text-center leading-tight w-full mt-1" style={{wordBreak:'break-word'}}>{s.role}</p>
-                                    </div>
-                                ))}
-                                </div>
-                            </div>
+                            )}
+                            <div className="flex flex-col items-center gap-2 w-full">
+                            {staffList.map((s, idx) => (
+                                <React.Fragment key={s.id || idx}>
+                                {idx > 0 && <div className="w-[2px] h-3 bg-[#e2d8f0]"></div>}
+                                <StaffCard
+                                    s={s}
+                                    onClick={onEmployeeClick}
+                                    draggable={isEditing}
+                                    isDragging={dragIdx === idx}
+                                    isDragOver={overIdx === idx && dragIdx !== null && dragIdx !== idx}
+                                    onDragStart={(e) => { setDragIdx(idx); e.dataTransfer.effectAllowed = 'move'; }}
+                                    onDragOver={(e) => { if (dragIdx !== null) { e.preventDefault(); setOverIdx(idx); } }}
+                                    onDrop={(e) => {
+                                        e.preventDefault();
+                                        if (dragIdx === null || dragIdx === idx) { setDragIdx(null); setOverIdx(null); return; }
+                                        const reordered = [...staffList];
+                                        const [moved] = reordered.splice(dragIdx, 1);
+                                        reordered.splice(idx, 0, moved);
+                                        if (onReorderStaff) onReorderStaff(reordered.map(x => x.name));
+                                        setDragIdx(null); setOverIdx(null);
+                                    }}
+                                    onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
+                                />
+                                </React.Fragment>
                             ))}
+                            </div>
                         </div>
                         </div>
                     )}
 
                     {hasStaff && (
-                        <div 
+                        <div
                         onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
                         className="absolute -bottom-4 left-1/2 transform -translate-x-1/2 z-20 cursor-pointer"
                         data-html2canvas-ignore="true"
@@ -513,36 +477,62 @@
                     )}
                     </div>
                 </div>
-                
-                {hasChildren && (
-                    <ul>
-                    {children}
-                    </ul>
-                )}
+
+                {hasChildren && (<ul>{children}</ul>)}
                 </li>
             );
         };
 
         function App() {
-            const [orgData, setOrgData] = useState(defaultOrgData);
+            // ─── Multi-chart state (FIX #7) ──────────────────────────────────────────
+            const [charts, setCharts] = useState({ main: { name: 'ELA Education', tree: defaultOrgData } });
+            const [activeChartId, setActiveChartId] = useState('main');
             const [allEmployeesList, setAllEmployeesList] = useState(defaultEmployeesList);
             const [isDbLoading, setIsDbLoading] = useState(true);
 
+            const orgData = charts[activeChartId]?.tree || defaultOrgData;
+
+            const [isEditingOrg, setIsEditingOrg] = useState(false);
+            const [editingOrgNode, setEditingOrgNode] = useState(null);
+            const [orgNodeForm, setOrgNodeForm] = useState({ id: '', dept: '', managerName: '', staffNames: [] });
+            const [selectedEmployeeProfile, setSelectedEmployeeProfile] = useState(null);
+            const [pendingPhoto, setPendingPhoto] = useState(null); // FIX #4: hold uploaded photo until Save
+            const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+            const [addMenuConfig, setAddMenuConfig] = useState(null);
+            const [newEmployeeForm, setNewEmployeeForm] = useState(null);
+            const [confirmDialog, setConfirmDialog] = useState(null);
+            const [alertDialog, setAlertDialog] = useState(null);
+            const [isExporting, setIsExporting] = useState(false);
+            const [assistantForm, setAssistantForm] = useState(null);
+            const [showCardLibrary, setShowCardLibrary] = useState(false);   // FIX #8
+            const [newChartName, setNewChartName] = useState(null);          // FIX #7
+            const [librarySearch, setLibrarySearch] = useState('');
+
+            const [orgZoomLevel, setOrgZoomLevel] = useState(0.85);
+            const [orgPan, setOrgPan] = useState({ x: 0, y: 0 });
+            const [isDraggingOrg, setIsDraggingOrg] = useState(false);
+            const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+            const [activeOrgTab, setActiveOrgTab] = useState('Overall Structure');
+
+            // ─── Cloud load (charts doc + employees doc) ─────────────────────────────
             useEffect(() => {
-                if (!window.firebaseReady) {
-                    setIsDbLoading(false);
-                    return;
-                }
+                if (!window.firebaseReady) { setIsDbLoading(false); return; }
                 const docRef = window.doc(window.db, 'orgChart', 'main');
                 const unsubscribe = window.onSnapshot(docRef, (docSnap) => {
                     if (docSnap.exists()) {
                         const data = docSnap.data();
-                        setOrgData(data.tree);
-                        setAllEmployeesList(data.employees);
+                        // Backward-compatible: old shape had {tree, employees}
+                        if (data.charts) {
+                            setCharts(data.charts);
+                            setActiveChartId(prev => data.charts[prev] ? prev : Object.keys(data.charts)[0]);
+                        } else if (data.tree) {
+                            setCharts({ main: { name: 'ELA Education', tree: data.tree } });
+                        }
+                        if (data.employees) setAllEmployeesList(data.employees);
                         setIsDbLoading(false);
                     } else {
                         window.setDoc(docRef, {
-                            tree: defaultOrgData,
+                            charts: { main: { name: 'ELA Education', tree: defaultOrgData } },
                             employees: defaultEmployeesList
                         }).then(() => setIsDbLoading(false));
                     }
@@ -550,15 +540,15 @@
                 return () => unsubscribe();
             }, []);
 
-            const saveToCloud = (newTree, newEmployees) => {
-                const finalTree = newTree || orgData;
+            // Persist charts + employees. Pass overrides to avoid stale state.
+            const saveAll = (newCharts, newEmployees) => {
+                const finalCharts = newCharts || charts;
                 const finalEmps = newEmployees || allEmployeesList;
-                if (newTree) setOrgData(newTree);
+                if (newCharts) setCharts(finalCharts);
                 if (newEmployees) setAllEmployeesList(finalEmps);
                 if (window.firebaseReady) {
                     window.setDoc(window.doc(window.db, 'orgChart', 'main'), {
-                        tree: finalTree,
-                        employees: finalEmps
+                        charts: finalCharts, employees: finalEmps
                     }).catch(err => {
                         console.error("Firebase Save Error:", err);
                         setAlertDialog("Failed to save to cloud database. Ensure Firebase security rules are set to test mode.");
@@ -566,26 +556,13 @@
                 }
             };
 
-            const [isEditingOrg, setIsEditingOrg] = useState(false);
-            const [editingOrgNode, setEditingOrgNode] = useState(null);
-            const [orgNodeForm, setOrgNodeForm] = useState({ id: '', dept: '', managerName: '', staffNames: [] });
-            const [selectedEmployeeProfile, setSelectedEmployeeProfile] = useState(null);
-            const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
-            const [addMenuConfig, setAddMenuConfig] = useState(null); 
-            const [newEmployeeForm, setNewEmployeeForm] = useState(null); 
-            const [confirmDialog, setConfirmDialog] = useState(null);
-            const [alertDialog, setAlertDialog] = useState(null);
-            const [isExporting, setIsExporting] = useState(false);
+            // Save a modified tree for the active chart.
+            const saveTree = (newTree) => {
+                const newCharts = { ...charts, [activeChartId]: { ...charts[activeChartId], tree: newTree } };
+                saveAll(newCharts, null);
+            };
+            const saveEmployees = (newEmps) => saveAll(null, newEmps);
 
-            // Executive Assistant management dialog state
-            const [assistantForm, setAssistantForm] = useState(null);
-
-            const [orgZoomLevel, setOrgZoomLevel] = useState(0.85);
-            const [orgPan, setOrgPan] = useState({ x: 0, y: 0 });
-            const [isDraggingOrg, setIsDraggingOrg] = useState(false);
-            const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-            const [activeOrgTab, setActiveOrgTab] = useState('Overall Structure');
-            
             const orgTabs = useMemo(() => ['Overall Structure', ...(orgData?.children?.map(c => c.dept) || [])], [orgData]);
 
             const updateNode = (tree, id, data) => {
@@ -593,43 +570,38 @@
                 if (tree.children) return { ...tree, children: tree.children.map(c => updateNode(c, id, data)) };
                 return tree;
             };
-            
             const addNode = (tree, parentId, newNode) => {
                 if (tree.id === parentId) return { ...tree, children: [...(tree.children || []), newNode] };
                 if (tree.children) return { ...tree, children: tree.children.map(c => addNode(c, parentId, newNode)) };
                 return tree;
             };
-            
             const deleteNode = (tree, id) => {
                 if (tree.children) return { ...tree, children: tree.children.filter(c => c.id !== id).map(c => deleteNode(c, id)) };
+                return tree;
+            };
+            const setStaffOrder = (tree, id, newStaffNames) => {
+                if (tree.id === id) return { ...tree, staffNames: newStaffNames };
+                if (tree.children) return { ...tree, children: tree.children.map(c => setStaffOrder(c, id, newStaffNames)) };
                 return tree;
             };
 
             const getEmployeesInBranch = (node) => {
                 let names = [node.managerName, node.assistantName, ...(node.staffNames || [])].filter(Boolean);
-                if (node.children) {
-                node.children.forEach(c => { names = names.concat(getEmployeesInBranch(c)); });
-                }
+                if (node.children) node.children.forEach(c => { names = names.concat(getEmployeesInBranch(c)); });
                 return names;
             };
 
             const getOrgTabStats = (tabName, specificBranch = null) => {
                 let emps = allEmployeesList;
                 if (tabName !== 'Overall Structure') {
-                const branch = orgData.children.find(c => c.dept === tabName);
-                if (branch) {
-                    const namesInBranch = getEmployeesInBranch(branch);
-                    emps = emps.filter(e => namesInBranch.includes(e.name));
+                    const branch = orgData.children.find(c => c.dept === tabName);
+                    if (branch) {
+                        const namesInBranch = getEmployeesInBranch(branch);
+                        emps = emps.filter(e => namesInBranch.includes(e.name));
+                    }
                 }
-                }
-                if (specificBranch) {
-                emps = emps.filter(e => e.branchOffice === specificBranch);
-                }
-                return {
-                total: emps.length,
-                male: emps.filter(e => e.gender === 'Male').length,
-                female: emps.filter(e => e.gender === 'Female').length
-                };
+                if (specificBranch) emps = emps.filter(e => e.branchOffice === specificBranch);
+                return { total: emps.length, male: emps.filter(e => e.gender === 'Male').length, female: emps.filter(e => e.gender === 'Female').length };
             };
 
             const getEmp = (name) => allEmployeesList.find(e => e.name === name) || { name, role: 'Unknown', profilePhoto: `https://i.pravatar.cc/150?u=${encodeURIComponent(name)}` };
@@ -638,94 +610,149 @@
             const rootManager = getEmp(orgData.managerName);
             const rootAssistant = orgData.assistantName ? getEmp(orgData.assistantName) : null;
 
-            const handlePhotoUpload = (e, empId) => {
+            // FIX #4: upload stages a pending photo; user must press Save to commit.
+            const handlePhotoStage = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
                 if (!file.type.match(/^image\/(jpeg|jpg|png)$/i)) {
                     setAlertDialog("Please upload a PNG or JPEG image file only.");
-                    e.target.value = '';
-                    return;
+                    e.target.value = ''; return;
                 }
                 setIsUploadingPhoto(true);
-                processImageFile(file, (base64) => {
-                    const newEmps = allEmployeesList.map(emp =>
-                        emp.id === empId ? { ...emp, profilePhoto: base64 } : emp
-                    );
-                    saveToCloud(null, newEmps);
-                    setSelectedEmployeeProfile(prev => ({ ...prev, profilePhoto: base64 }));
-                    setIsUploadingPhoto(false);
-                });
+                processImageFile(file, (base64) => { setPendingPhoto(base64); setIsUploadingPhoto(false); });
                 e.target.value = '';
             };
-
+            const handlePhotoSave = () => {
+                if (!pendingPhoto || !selectedEmployeeProfile) return;
+                const newEmps = allEmployeesList.map(emp => emp.id === selectedEmployeeProfile.id ? { ...emp, profilePhoto: pendingPhoto } : emp);
+                saveEmployees(newEmps);
+                setSelectedEmployeeProfile(prev => ({ ...prev, profilePhoto: pendingPhoto }));
+                setPendingPhoto(null);
+            };
             const handlePhotoDelete = (emp) => {
                 setConfirmDialog({
                     message: `Remove the current photo for ${emp.name}? They will revert to their default avatar.`,
-                    isDanger: false,
-                    confirmLabel: 'Remove Photo',
-                    confirmClass: 'bg-orange-500 hover:bg-orange-600',
+                    confirmLabel: 'Remove Photo', confirmClass: 'bg-orange-500 hover:bg-orange-600',
                     onConfirm: () => {
-                        const fallbackPhoto = emp.defaultPhoto ||
-                            `https://i.pravatar.cc/150?u=${encodeURIComponent(emp.name)}`;
-                        const newEmps = allEmployeesList.map(e =>
-                            e.id === emp.id ? { ...e, profilePhoto: fallbackPhoto } : e
-                        );
-                        saveToCloud(null, newEmps);
+                        const fallbackPhoto = emp.defaultPhoto || `https://i.pravatar.cc/150?u=${encodeURIComponent(emp.name)}`;
+                        const newEmps = allEmployeesList.map(e => e.id === emp.id ? { ...e, profilePhoto: fallbackPhoto } : e);
+                        saveEmployees(newEmps);
                         setSelectedEmployeeProfile(prev => ({ ...prev, profilePhoto: fallbackPhoto }));
+                        setPendingPhoto(null);
                         setConfirmDialog(null);
                     }
                 });
             };
 
-            const handleAddNewEmployee = () => {
-                if (!newEmployeeForm.name || !newEmployeeForm.role) {
-                setAlertDialog("Name and Role are required.");
-                return;
-                }
-                const newId = `ELA${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
-                const defaultAvatar = `https://randomuser.me/api/portraits/${newEmployeeForm.gender === 'Female' ? 'women' : 'men'}/${Math.floor(Math.random() * 90) + 1}.jpg`;
-                const newEmp = {
-                    id: newId, name: newEmployeeForm.name, role: newEmployeeForm.role,
-                    gender: newEmployeeForm.gender || 'Other', dept: 'Assigned',
-                    email: `${newEmployeeForm.name.toLowerCase().replace(/\s+/g, '')}@ela.edu`,
-                    contactNumber: 'TBD', branchOffice: 'HQ', insurance: 'Staff member',
-                    joinDate: new Date().toISOString().split('T')[0],
+            // FIX #8: create a brand-new employee card stored in the shared library.
+            const makeEmployee = (form) => {
+                const newId = `EMP${Date.now().toString(36).toUpperCase()}`;
+                const defaultAvatar = form.profilePhoto || `https://randomuser.me/api/portraits/${form.gender === 'Female' ? 'women' : 'men'}/${Math.floor(Math.random() * 90) + 1}.jpg`;
+                return {
+                    id: newId, name: form.name, role: form.role,
+                    gender: form.gender || 'Other', dept: form.dept || 'Unassigned',
+                    email: form.email || `${form.name.toLowerCase().replace(/\s+/g, '')}@company.com`,
+                    contactNumber: form.contactNumber || 'TBD', branchOffice: form.branchOffice || 'HQ',
+                    insurance: form.insurance || 'Staff member', joinDate: new Date().toISOString().split('T')[0],
                     profilePhoto: defaultAvatar, defaultPhoto: defaultAvatar
                 };
-                const newEmps = [...allEmployeesList, newEmp];
-                const appendStaff = (tree) => {
-                    if (tree.id === newEmployeeForm.parentId) return { ...tree, staffNames: [...(tree.staffNames || []), newEmp.name] };
-                    if (tree.children) return { ...tree, children: tree.children.map(appendStaff) };
-                    return tree;
-                };
-                const newTree = appendStaff(orgData);
-                saveToCloud(newTree, newEmps);
-                setNewEmployeeForm(null);
-                setAlertDialog(`${newEmp.name} successfully added to the organization.`);
             };
 
-            // Save the executive assistant assignment for a given node id.
+            const handleAddNewEmployee = () => {
+                if (!newEmployeeForm.name || !newEmployeeForm.role) { setAlertDialog("Name and Role are required."); return; }
+                const newEmp = makeEmployee(newEmployeeForm);
+                const newEmps = [...allEmployeesList, newEmp];
+                if (newEmployeeForm.parentId) {
+                    const appendStaff = (tree) => {
+                        if (tree.id === newEmployeeForm.parentId) return { ...tree, staffNames: [...(tree.staffNames || []), newEmp.name] };
+                        if (tree.children) return { ...tree, children: tree.children.map(appendStaff) };
+                        return tree;
+                    };
+                    const newTree = appendStaff(orgData);
+                    const newCharts = { ...charts, [activeChartId]: { ...charts[activeChartId], tree: newTree } };
+                    saveAll(newCharts, newEmps);
+                    setAlertDialog(`${newEmp.name} added to the chart and saved to the card library.`);
+                } else {
+                    saveEmployees(newEmps);
+                    setAlertDialog(`${newEmp.name} saved to the card library for reuse.`);
+                }
+                setNewEmployeeForm(null);
+            };
+
+            // FIX #8: duplicate an existing library card.
+            const duplicateEmployee = (emp) => {
+                const copy = makeEmployee({ ...emp, name: `${emp.name} (Copy)` });
+                saveEmployees([...allEmployeesList, copy]);
+            };
+            const deleteLibraryEmployee = (emp) => {
+                setConfirmDialog({
+                    message: `Delete card "${emp.name}" from the library? This also removes them from every chart.`,
+                    confirmLabel: 'Delete Card', confirmClass: 'bg-red-500 hover:bg-red-600',
+                    onConfirm: () => {
+                        const newEmps = allEmployeesList.filter(e => e.id !== emp.id);
+                        const removeFrom = (tree) => {
+                            let u = { ...tree };
+                            if (u.managerName === emp.name) u.managerName = null;
+                            if (u.assistantName === emp.name) u.assistantName = null;
+                            if (u.staffNames) u.staffNames = u.staffNames.filter(n => n !== emp.name);
+                            if (u.children) u.children = u.children.map(removeFrom);
+                            return u;
+                        };
+                        const newCharts = {};
+                        Object.entries(charts).forEach(([id, c]) => { newCharts[id] = { ...c, tree: removeFrom(c.tree) }; });
+                        saveAll(newCharts, newEmps);
+                        setConfirmDialog(null);
+                    }
+                });
+            };
+
             const handleSaveAssistant = () => {
                 if (!assistantForm) return;
                 const newTree = updateNode(orgData, assistantForm.nodeId, { assistantName: assistantForm.assistantName || null });
-                saveToCloud(newTree, null);
+                saveTree(newTree);
                 setAssistantForm(null);
             };
 
-            // Per-department export helper. Each ModernOrgNode card carries a stable export id.
+            // FIX #7: create a new chart (reuses the same library cards).
+            const createChart = (name) => {
+                const id = `chart_${Date.now().toString(36)}`;
+                const emptyTree = { id: 'root', dept: 'Executive Management', managerName: null, assistantName: null, staffNames: [], children: [] };
+                const newCharts = { ...charts, [id]: { name: name || 'New Organization', tree: emptyTree } };
+                saveAll(newCharts, null);
+                setActiveChartId(id);
+                setActiveOrgTab('Overall Structure');
+                setNewChartName(null);
+            };
+            const deleteChart = (id) => {
+                if (Object.keys(charts).length <= 1) { setAlertDialog("You must keep at least one chart."); return; }
+                setConfirmDialog({
+                    message: `Delete the chart "${charts[id].name}"? The employee cards remain in the library.`,
+                    confirmLabel: 'Delete Chart', confirmClass: 'bg-red-500 hover:bg-red-600',
+                    onConfirm: () => {
+                        const newCharts = { ...charts }; delete newCharts[id];
+                        const fallback = Object.keys(newCharts)[0];
+                        saveAll(newCharts, null);
+                        setActiveChartId(fallback);
+                        setActiveOrgTab('Overall Structure');
+                        setConfirmDialog(null);
+                    }
+                });
+            };
+
             const exportDepartment = (node, format) => {
-                handleExport(format, setIsExporting, setAlertDialog, `dept-export-${node.id}`, `ELA_${(node.dept || 'Department').replace(/[^a-z0-9]+/gi, '_')}`);
+                handleExport(format, setIsExporting, setAlertDialog, `dept-export-${node.id}`, `${(charts[activeChartId]?.name || 'Org').replace(/[^a-z0-9]+/gi,'_')}_${(node.dept || 'Department').replace(/[^a-z0-9]+/gi, '_')}`);
             };
 
             const renderOrgTree = (node, level = 1) => {
                 const manager = node.managerName ? getEmp(node.managerName) : null;
                 const staff = getStaff(node.staffNames || []);
                 return (
-                <ModernOrgNode 
-                    key={node.id} dept={node.dept} manager={manager} staffList={staff} 
+                <ModernOrgNode
+                    key={node.id} node={node} dept={node.dept} manager={manager} staffList={staff}
                     exportId={`dept-export-${node.id}`}
                     onExport={(fmt) => exportDepartment(node, fmt)}
-                    onEmployeeClick={(emp) => { setSelectedEmployeeProfile(emp); }}
+                    onEmployeeClick={(emp) => { setSelectedEmployeeProfile(emp); setPendingPhoto(null); }}
+                    onReorderStaff={(names) => { const newTree = setStaffOrder(orgData, node.id, names); saveTree(newTree); }}
                     isEditing={isEditingOrg} isRoot={false}
                     onEdit={() => { setEditingOrgNode(node.id); setOrgNodeForm({ id: node.id, dept: node.dept, managerName: node.managerName || '', staffNames: node.staffNames || [], assistantName: node.assistantName || '' }); }}
                     onAddMenu={() => { setAddMenuConfig({ parentId: node.id, deptName: node.dept }); }}
@@ -733,7 +760,7 @@
                         setConfirmDialog({
                             message: `Are you sure you want to delete ${node.dept} and all its sub-departments?`,
                             confirmLabel: 'Delete', confirmClass: 'bg-red-500 hover:bg-red-600',
-                            onConfirm: () => { const newTree = deleteNode(orgData, node.id); saveToCloud(newTree, null); setConfirmDialog(null); }
+                            onConfirm: () => { const newTree = deleteNode(orgData, node.id); saveTree(newTree); setConfirmDialog(null); }
                         });
                     }}
                 >
@@ -751,6 +778,10 @@
                     </div>
                 );
             }
+
+            const libraryFiltered = allEmployeesList.filter(e =>
+                !librarySearch || e.name.toLowerCase().includes(librarySearch.toLowerCase()) || (e.role || '').toLowerCase().includes(librarySearch.toLowerCase())
+            );
 
             return (
                 <div className="flex flex-col h-screen bg-[#f4f7fa] font-sans relative">
@@ -770,11 +801,27 @@
                     </div>
                     <h1 className="text-xl font-extrabold text-gray-800 tracking-tight">Interactive <span className="text-[#dfa634]">Org Chart</span></h1>
                     </div>
-                    <div className="flex items-center space-x-6">
+                    <div className="flex items-center space-x-4">
+                    {/* FIX #7: chart selector */}
+                    <div className="flex items-center space-x-2 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-200">
+                        <LayoutGrid className="w-4 h-4 text-[#4a3189]" />
+                        <select value={activeChartId}
+                            onChange={(e) => { setActiveChartId(e.target.value); setActiveOrgTab('Overall Structure'); setOrgPan({x:0,y:0}); }}
+                            className="bg-transparent text-sm font-bold text-gray-700 outline-none cursor-pointer max-w-[180px]">
+                            {Object.entries(charts).map(([id, c]) => <option key={id} value={id}>{c.name}</option>)}
+                        </select>
+                        <button onClick={() => setNewChartName('')} className="text-[#4a3189] hover:text-[#38236b]" title="New organization chart"><FolderPlus className="w-4 h-4" /></button>
+                        {Object.keys(charts).length > 1 && (
+                            <button onClick={() => deleteChart(activeChartId)} className="text-red-400 hover:text-red-600" title="Delete this chart"><Trash2 className="w-4 h-4" /></button>
+                        )}
+                    </div>
+                    <button onClick={() => setShowCardLibrary(true)} className="flex items-center space-x-2 bg-purple-50 px-3 py-1.5 rounded-xl border border-purple-100 text-[#4a3189] font-bold text-sm hover:bg-purple-100 transition" title="Open reusable card library">
+                        <Library className="w-4 h-4" /> <span>Card Library</span>
+                    </button>
                     {window.firebaseReady ? (
                         <div className="flex items-center space-x-2 bg-green-50 px-3 py-1.5 rounded-full border border-green-100 shadow-inner">
                             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                            <span className="text-xs font-bold text-green-700">Cloud Sync Active</span>
+                            <span className="text-xs font-bold text-green-700">Cloud Sync</span>
                         </div>
                     ) : (
                         <div className="flex items-center space-x-2 bg-yellow-50 px-3 py-1.5 rounded-full border border-yellow-100 shadow-inner">
@@ -782,24 +829,20 @@
                             <span className="text-xs font-bold text-yellow-700">Local Mode</span>
                         </div>
                     )}
-                    <div className="flex items-center space-x-2 bg-gray-50 px-3 py-1.5 rounded-full border border-gray-100 shadow-inner">
-                        <div className="w-8 h-8 rounded-full bg-[#dfa634] text-white flex items-center justify-center font-bold text-xs shadow-sm ring-2 ring-white">HR</div>
-                        <span className="text-sm font-bold text-gray-700">System Admin</span>
-                    </div>
                     </div>
                 </header>
 
                 <main className="flex-1 flex flex-col overflow-hidden p-6 max-w-[1600px] mx-auto w-full">
-                    
+
                     <div className="flex flex-col bg-white p-4 rounded-2xl shadow-sm border border-gray-100/80 space-y-4 z-10 relative">
                     <div className="flex items-center justify-between">
                         <div>
                         <h2 className="text-xl font-bold text-gray-800 flex items-center">
-                            <Network className="w-5 h-5 mr-2 text-[#dfa634]" /> ELA Company Structure
+                            <Network className="w-5 h-5 mr-2 text-[#dfa634]" /> {charts[activeChartId]?.name} · Structure
                         </h2>
                         <p className="text-gray-500 mt-1 text-sm font-medium">Pan, zoom, filter, and edit the living organizational hierarchy.</p>
                         </div>
-                        
+
                         <div className="flex items-center space-x-3">
                         <div className="flex items-center space-x-1 bg-gray-50 rounded-xl p-1 border border-gray-200 shadow-inner">
                             <button onClick={() => setOrgZoomLevel(z => Math.max(z - 0.1, 0.3))} className="p-2 bg-white shadow-sm rounded-lg text-gray-600 hover:text-[#4a3189] hover:bg-purple-50 transition" title="Zoom Out"><Minus className="w-4 h-4" /></button>
@@ -807,38 +850,29 @@
                             <button onClick={() => setOrgZoomLevel(z => Math.min(z + 0.1, 2.5))} className="p-2 bg-white shadow-sm rounded-lg text-gray-600 hover:text-[#4a3189] hover:bg-purple-50 transition" title="Zoom In"><Plus className="w-4 h-4" /></button>
                         </div>
 
-                        {/* Executive Assistant management (only meaningful on Overall Structure) */}
                         {activeOrgTab === 'Overall Structure' && (
-                            <button
-                                onClick={() => setAssistantForm({ nodeId: orgData.id, assistantName: orgData.assistantName || '' })}
-                                className="px-5 py-2.5 bg-white shadow-sm border border-gray-200 text-gray-700 rounded-xl text-sm font-bold flex items-center transition-all hover:border-[#4a3189]/50 hover:bg-purple-50/50 hover:shadow-md"
-                                title="Add or edit Executive Assistant"
-                            >
+                            <button onClick={() => setAssistantForm({ nodeId: orgData.id, assistantName: orgData.assistantName || '' })}
+                                className="px-4 py-2.5 bg-white shadow-sm border border-gray-200 text-gray-700 rounded-xl text-sm font-bold flex items-center transition-all hover:border-[#4a3189]/50 hover:bg-purple-50/50 hover:shadow-md"
+                                title="Add or edit Executive Assistant">
                                 <UserPlus className="w-4 h-4 mr-2 text-[#4a3189]" />
-                                {orgData.assistantName ? 'Edit Executive Assistant' : 'Add Executive Assistant'}
+                                {orgData.assistantName ? 'Edit Assistant' : 'Add Assistant'}
                             </button>
                         )}
-                        
-                        <button 
-                            onClick={() => setIsEditingOrg(!isEditingOrg)} 
-                            className={`px-5 py-2.5 shadow-sm border rounded-xl text-sm font-bold flex items-center transition-all ${isEditingOrg ? 'bg-[#4a3189] text-white border-[#4a3189] hover:bg-[#38236b] shadow-purple-900/20' : 'bg-white border-gray-200 text-gray-700 hover:border-[#dfa634]/50 hover:bg-yellow-50/50 hover:shadow-md'}`}
-                        >
+
+                        <button onClick={() => setIsEditingOrg(!isEditingOrg)}
+                            className={`px-5 py-2.5 shadow-sm border rounded-xl text-sm font-bold flex items-center transition-all ${isEditingOrg ? 'bg-[#4a3189] text-white border-[#4a3189] hover:bg-[#38236b] shadow-purple-900/20' : 'bg-white border-gray-200 text-gray-700 hover:border-[#dfa634]/50 hover:bg-yellow-50/50 hover:shadow-md'}`}>
                             {isEditingOrg ? <><Save className="w-4 h-4 mr-2" /> Done Editing</> : <><Edit className="w-4 h-4 mr-2" /> Edit Structure</>}
                         </button>
-                        
+
                         <div className="relative group">
-                            <button
-                                disabled={isExporting}
-                                className="px-5 py-2.5 bg-gradient-to-r from-[#dfa634] to-[#f5c76a] text-white shadow-lg shadow-yellow-600/20 rounded-xl text-sm font-bold flex items-center transition hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
-                            >
-                                {isExporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
-                                Export
+                            <button disabled={isExporting} className="px-5 py-2.5 bg-gradient-to-r from-[#dfa634] to-[#f5c76a] text-white shadow-lg shadow-yellow-600/20 rounded-xl text-sm font-bold flex items-center transition hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100">
+                                {isExporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />} Export
                             </button>
                             {!isExporting && (
                                 <div className="absolute right-0 mt-2 w-60 bg-white border border-gray-100 rounded-xl shadow-2xl py-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all transform origin-top-right z-50">
                                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 pt-1 pb-2">Current view · A4 · 300 DPI</p>
-                                    <button onClick={() => handleExport('png', setIsExporting, setAlertDialog)} className="block w-full text-left px-5 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">Export as PNG (A4)</button>
-                                    <button onClick={() => handleExport('pdf', setIsExporting, setAlertDialog)} className="block w-full text-left px-5 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">Export as PDF (A4)</button>
+                                    <button onClick={() => handleExport('png', setIsExporting, setAlertDialog, 'org-chart-export-area', (charts[activeChartId]?.name||'Org').replace(/[^a-z0-9]+/gi,'_'))} className="block w-full text-left px-5 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">Export as PNG (A4)</button>
+                                    <button onClick={() => handleExport('pdf', setIsExporting, setAlertDialog, 'org-chart-export-area', (charts[activeChartId]?.name||'Org').replace(/[^a-z0-9]+/gi,'_'))} className="block w-full text-left px-5 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">Export as PDF (A4)</button>
                                 </div>
                             )}
                         </div>
@@ -851,15 +885,9 @@
                         const isActive = activeOrgTab === tab;
                         const isOverall = tab === 'Overall Structure';
                         return (
-                            <div 
-                            key={tab}
+                            <div key={tab}
                             onClick={() => { setActiveOrgTab(tab); setOrgPan({ x: 0, y: 0 }); setOrgZoomLevel(0.85); }}
-                            className={`flex-shrink-0 cursor-pointer px-5 py-4 w-[250px] rounded-2xl transition-all duration-300 border relative overflow-hidden ${
-                                isActive 
-                                ? 'bg-[#292c44] text-white shadow-xl shadow-[#292c44]/30 scale-[1.02] border-transparent z-10' 
-                                : 'bg-white text-gray-600 hover:border-[#dfa634]/50 hover:shadow-lg border-gray-200'
-                            }`}
-                            >
+                            className={`flex-shrink-0 cursor-pointer px-5 py-4 w-[250px] rounded-2xl transition-all duration-300 border relative overflow-hidden ${isActive ? 'bg-[#292c44] text-white shadow-xl shadow-[#292c44]/30 scale-[1.02] border-transparent z-10' : 'bg-white text-gray-600 hover:border-[#dfa634]/50 hover:shadow-lg border-gray-200'}`}>
                             {isActive && <div className="absolute -right-6 -top-6 w-24 h-24 bg-[#dfa634]/20 rounded-full blur-2xl"></div>}
                             <div className="relative z-10">
                                 <div className="flex items-center space-x-3 mb-3">
@@ -872,15 +900,11 @@
                                 <div className="space-y-2">
                                     <div className="flex justify-between items-center text-[10px]">
                                         <span className={`font-bold ${isActive ? 'text-gray-300' : 'text-[#4a3189]'}`}>Phnom Penh</span>
-                                        <span className={isActive ? 'text-white/90' : 'text-gray-500'}>
-                                        <strong className={`text-[12px] ${isActive ? 'text-white' : 'text-gray-800'}`}>{getOrgTabStats(tab, 'Phnom Penh HQ').total}</strong> <span className="opacity-75">(M:{getOrgTabStats(tab, 'Phnom Penh HQ').male} F:{getOrgTabStats(tab, 'Phnom Penh HQ').female})</span>
-                                        </span>
+                                        <span className={isActive ? 'text-white/90' : 'text-gray-500'}><strong className={`text-[12px] ${isActive ? 'text-white' : 'text-gray-800'}`}>{getOrgTabStats(tab, 'Phnom Penh HQ').total}</strong> <span className="opacity-75">(M:{getOrgTabStats(tab, 'Phnom Penh HQ').male} F:{getOrgTabStats(tab, 'Phnom Penh HQ').female})</span></span>
                                     </div>
                                     <div className="flex justify-between items-center text-[10px]">
                                         <span className={`font-bold ${isActive ? 'text-gray-300' : 'text-[#4a3189]'}`}>Siem Reap</span>
-                                        <span className={isActive ? 'text-white/90' : 'text-gray-500'}>
-                                        <strong className={`text-[12px] ${isActive ? 'text-white' : 'text-gray-800'}`}>{getOrgTabStats(tab, 'Siem Reap Branch').total}</strong> <span className="opacity-75">(M:{getOrgTabStats(tab, 'Siem Reap Branch').male} F:{getOrgTabStats(tab, 'Siem Reap Branch').female})</span>
-                                        </span>
+                                        <span className={isActive ? 'text-white/90' : 'text-gray-500'}><strong className={`text-[12px] ${isActive ? 'text-white' : 'text-gray-800'}`}>{getOrgTabStats(tab, 'Siem Reap Branch').total}</strong> <span className="opacity-75">(M:{getOrgTabStats(tab, 'Siem Reap Branch').male} F:{getOrgTabStats(tab, 'Siem Reap Branch').female})</span></span>
                                     </div>
                                 </div>
                                 ) : (
@@ -898,26 +922,14 @@
                         })}
                     </div>
                     </div>
-                    
-                    <div 
-                    className={`flex-1 mt-6 relative bg-white rounded-3xl shadow-inner overflow-hidden border border-gray-200/60 flex items-start pt-16 ${isDraggingOrg ? 'cursor-grabbing' : 'cursor-grab'}`}
-                    onWheel={(e) => {
-                        const delta = e.deltaY > 0 ? -0.05 : 0.05;
-                        setOrgZoomLevel(z => Math.min(Math.max(0.3, z + delta), 2.5));
-                    }}
-                    onMouseDown={(e) => {
-                        setIsDraggingOrg(true);
-                        setDragStart({ x: e.clientX - orgPan.x, y: e.clientY - orgPan.y });
-                    }}
-                    onMouseMove={(e) => {
-                        if (!isDraggingOrg) return;
-                        setOrgPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
-                    }}
-                    onMouseUp={() => setIsDraggingOrg(false)}
-                    onMouseLeave={() => setIsDraggingOrg(false)}
-                    >
+
+                    <div className={`flex-1 mt-6 relative bg-white rounded-3xl shadow-inner overflow-hidden border border-gray-200/60 flex items-start pt-16 ${isDraggingOrg ? 'cursor-grabbing' : 'cursor-grab'}`}
+                    onWheel={(e) => { const delta = e.deltaY > 0 ? -0.05 : 0.05; setOrgZoomLevel(z => Math.min(Math.max(0.3, z + delta), 2.5)); }}
+                    onMouseDown={(e) => { setIsDraggingOrg(true); setDragStart({ x: e.clientX - orgPan.x, y: e.clientY - orgPan.y }); }}
+                    onMouseMove={(e) => { if (!isDraggingOrg) return; setOrgPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }); }}
+                    onMouseUp={() => setIsDraggingOrg(false)} onMouseLeave={() => setIsDraggingOrg(false)}>
                     <div className="absolute inset-0" style={{ backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)', backgroundSize: '40px 40px', opacity: 0.3, pointerEvents: 'none' }}></div>
-                    
+
                     <style>{`
                         .modern-tree ul { padding-top: 30px; position: relative; display: flex; justify-content: center; }
                         .modern-tree li { flex: 1; float: left; text-align: center; list-style-type: none; position: relative; padding: 30px 10px 0 10px; transition: all 0.3s; display: flex; flex-direction: column; align-items: center; }
@@ -929,82 +941,80 @@
                         .modern-tree li:last-child::before { border-right: 3px solid #e2d8f0; border-radius: 0 16px 0 0; }
                         .modern-tree li:first-child::after { border-radius: 16px 0 0 0; }
                         .modern-tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; border-left: 3px solid #e2d8f0; width: 0; height: 30px; transform: translateX(-50%); z-index: 0; }
-                        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+                        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
                         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
                         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
                         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
                         .no-select { user-select: none; -webkit-user-select: none; }
-                        .photo-upload-btn { transition: all 0.2s ease; }
-                        .photo-upload-btn:hover { transform: translateY(-1px); }
+                        .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
                     `}</style>
-                    
-                    <div 
-                        className="min-w-max w-full px-10 pb-[500px] flex justify-center origin-top no-select z-10"
-                        style={{ 
-                        transform: `translate(${orgPan.x}px, ${orgPan.y}px) scale(${orgZoomLevel})`,
-                        transition: isDraggingOrg ? 'none' : 'transform 0.1s ease-out'
-                        }}
-                    >
+
+                    <div className="min-w-max w-full px-10 pb-[500px] flex justify-center origin-top no-select z-10"
+                        style={{ transform: `translate(${orgPan.x}px, ${orgPan.y}px) scale(${orgZoomLevel})`, transition: isDraggingOrg ? 'none' : 'transform 0.1s ease-out' }}>
                         <div className="modern-tree inline-block p-12" id="org-chart-export-area">
                         <ul>
                             {activeOrgTab === 'Overall Structure' ? (
+                            (orgData.managerName || (orgData.children && orgData.children.length)) ? (
                             <li>
                                 <div className="flex flex-col items-center">
-                                <div id="dept-export-root" className="z-10 relative group cursor-pointer hover:-translate-y-1 transition-transform duration-300 mx-auto w-72" onClick={() => { setSelectedEmployeeProfile(rootManager); }}>
+                                <div id="dept-export-root" className="z-10 relative group cursor-pointer hover:-translate-y-1 transition-transform duration-300 mx-auto w-72" onClick={() => { if(rootManager) { setSelectedEmployeeProfile(rootManager); setPendingPhoto(null); } }}>
                                     {isEditingOrg && (
-                                    <div className="absolute -top-4 -right-4 flex space-x-1 z-30">
+                                    <div className="absolute -top-4 -right-4 flex space-x-1 z-30" data-html2canvas-ignore="true">
                                         <button onClick={(e) => { e.stopPropagation(); setEditingOrgNode(orgData.id); setOrgNodeForm({ id: orgData.id, dept: orgData.dept, managerName: orgData.managerName || '', staffNames: orgData.staffNames || [], assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Department"><Edit className="w-3 h-3" /></button>
                                         <button onClick={(e) => { e.stopPropagation(); setAddMenuConfig({ parentId: orgData.id, deptName: orgData.dept }); }} className="bg-green-500 text-white p-2 rounded-full shadow-lg hover:bg-green-600 transition" title="Add"><Plus className="w-3 h-3" /></button>
                                     </div>
                                     )}
-                                    {/* Root dept badge + export */}
                                     <div className="absolute -top-4 left-0 right-0 flex justify-center items-center gap-1 z-20">
-                                    <div className="bg-[#292c44] text-white font-bold text-[10px] uppercase tracking-widest px-5 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30 whitespace-nowrap pointer-events-none">
-                                        {orgData.dept}
-                                    </div>
+                                    <div className="bg-[#292c44] text-white font-bold text-[10px] uppercase tracking-widest px-5 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30 whitespace-nowrap pointer-events-none">{orgData.dept}</div>
                                     <div className="relative group/exp pointer-events-auto" data-html2canvas-ignore="true">
-                                        <button onClick={(e) => e.stopPropagation()} className="bg-[#dfa634] text-white w-7 h-7 rounded-full flex items-center justify-center shadow-lg border border-white/20 hover:bg-[#c9942a] transition" title="Export this department">
-                                        <Download className="w-3.5 h-3.5" />
-                                        </button>
+                                        <button onClick={(e) => e.stopPropagation()} className="bg-[#dfa634] text-white w-7 h-7 rounded-full flex items-center justify-center shadow-lg border border-white/20 hover:bg-[#c9942a] transition" title="Export this department"><Download className="w-3.5 h-3.5" /></button>
                                         <div className="absolute left-1/2 -translate-x-1/2 mt-1 w-32 bg-white border border-gray-100 rounded-xl shadow-2xl py-1.5 opacity-0 invisible group-hover/exp:opacity-100 group-hover/exp:visible transition-all z-50">
-                                        <button onClick={(e) => { e.stopPropagation(); handleExport('png', setIsExporting, setAlertDialog, 'dept-export-root', 'ELA_Executive_Management'); }} className="block w-full text-left px-4 py-1.5 text-xs text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">PNG</button>
-                                        <button onClick={(e) => { e.stopPropagation(); handleExport('pdf', setIsExporting, setAlertDialog, 'dept-export-root', 'ELA_Executive_Management'); }} className="block w-full text-left px-4 py-1.5 text-xs text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">PDF</button>
+                                        <button onClick={(e) => { e.stopPropagation(); handleExport('png', setIsExporting, setAlertDialog, 'dept-export-root', `${(charts[activeChartId]?.name||'Org').replace(/[^a-z0-9]+/gi,'_')}_Executive`); }} className="block w-full text-left px-4 py-1.5 text-xs text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">PNG</button>
+                                        <button onClick={(e) => { e.stopPropagation(); handleExport('pdf', setIsExporting, setAlertDialog, 'dept-export-root', `${(charts[activeChartId]?.name||'Org').replace(/[^a-z0-9]+/gi,'_')}_Executive`); }} className="block w-full text-left px-4 py-1.5 text-xs text-gray-700 hover:bg-purple-50 hover:text-[#4a3189] font-bold transition">PDF</button>
                                         </div>
                                     </div>
                                     </div>
-                                    <div className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl pt-10 pb-5 px-6 w-72 flex items-center flex-col relative group-hover:shadow-2xl transition-all" style={{overflow:'visible'}}>
-                                    <div className="relative mb-3">
-                                        <div className="absolute inset-0 bg-[#dfa634] rounded-xl blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
-                                        <img src={rootManager.profilePhoto} className="relative w-[90px] h-[90px] rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootManager.name} />
+                                    {orgData.managerName ? (
+                                    <div className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl pt-10 pb-5 px-5 w-72 flex items-center flex-col relative group-hover:shadow-2xl transition-all" style={{overflow:'visible'}}>
+                                    <div className="relative mb-3 w-full">
+                                        <div className="absolute inset-0 bg-[#dfa634] rounded-2xl blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
+                                        <img src={rootManager.profilePhoto} className="relative w-full h-[150px] rounded-2xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootManager.name} />
                                     </div>
-                                    <p className="text-sm font-extrabold text-gray-800 hover:text-[#4a3189] transition-colors w-full text-center leading-tight" style={{wordBreak:'break-word'}}>{rootManager.name}</p>
-                                    <p className="text-[10px] font-bold text-[#dfa634] uppercase tracking-wider mt-1 w-full text-center leading-tight" style={{wordBreak:'break-word'}}>{rootManager.role}</p>
+                                    <p className="text-sm font-extrabold text-gray-800 hover:text-[#4a3189] transition-colors w-full text-center leading-snug break-words">{rootManager.name}</p>
+                                    <p className="text-[10px] font-bold text-[#dfa634] uppercase tracking-wide mt-1 w-full text-center leading-snug break-words line-clamp-2">{rootManager.role}</p>
                                     </div>
+                                    ) : (
+                                    <div className="bg-white/90 border border-dashed border-gray-300 rounded-3xl pt-12 pb-6 px-5 w-72 flex items-center flex-col">
+                                        <p className="text-sm font-bold text-gray-400">No head assigned</p>
+                                        {isEditingOrg && <button onClick={(e)=>{e.stopPropagation(); setEditingOrgNode(orgData.id); setOrgNodeForm({ id: orgData.id, dept: orgData.dept, managerName: '', staffNames: orgData.staffNames || [], assistantName: orgData.assistantName || '' });}} className="mt-2 text-xs font-bold text-[#4a3189]">Assign head</button>}
+                                    </div>
+                                    )}
                                 </div>
 
-                                {/* Executive Assistant box — full org-position behaviour */}
+                                {/* Executive Assistant box — FIX #1: same width/style as main cards */}
                                 {rootAssistant && (
-                                <div className="relative flex justify-center w-full h-24">
+                                <div className="relative flex justify-center w-full h-28">
                                     <div className="w-[3px] h-full bg-[#e2d8f0]"></div>
-                                    <div className="absolute top-1/2 right-1/2 flex items-center pr-0 transform -translate-y-1/2">
-                                        <div 
-                                        onClick={() => { setSelectedEmployeeProfile(rootAssistant); }}
-                                        className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-2xl p-2.5 w-56 flex items-center z-10 relative group hover:shadow-2xl hover:-translate-y-0.5 transition-all cursor-pointer"
-                                        >
+                                    <div className="absolute top-1/2 right-1/2 flex items-center transform -translate-y-1/2">
+                                        <div onClick={() => { setSelectedEmployeeProfile(rootAssistant); setPendingPhoto(null); }}
+                                        className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-72 flex flex-col items-center z-10 relative group hover:shadow-2xl hover:-translate-y-1 transition-all cursor-pointer pt-9 pb-4 px-5" style={{overflow:'visible'}}>
                                         {isEditingOrg && (
-                                            <div className="absolute -top-3 -right-3 flex space-x-1 z-30" data-html2canvas-ignore="true">
-                                            <button onClick={(e) => { e.stopPropagation(); setAssistantForm({ nodeId: orgData.id, assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-1.5 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Executive Assistant"><Edit className="w-3 h-3" /></button>
-                                            <button onClick={(e) => { e.stopPropagation(); setConfirmDialog({ message: `Remove ${rootAssistant.name} as Executive Assistant?`, confirmLabel: 'Remove', confirmClass: 'bg-red-500 hover:bg-red-600', onConfirm: () => { const newTree = updateNode(orgData, orgData.id, { assistantName: null }); saveToCloud(newTree, null); setConfirmDialog(null); } }); }} className="bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition" title="Remove Executive Assistant"><Trash2 className="w-3 h-3" /></button>
+                                            <div className="absolute -top-4 -right-4 flex space-x-1 z-30" data-html2canvas-ignore="true">
+                                            <button onClick={(e) => { e.stopPropagation(); setAssistantForm({ nodeId: orgData.id, assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Executive Assistant"><Edit className="w-3 h-3" /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); setConfirmDialog({ message: `Remove ${rootAssistant.name} as Executive Assistant?`, confirmLabel: 'Remove', confirmClass: 'bg-red-500 hover:bg-red-600', onConfirm: () => { const newTree = updateNode(orgData, orgData.id, { assistantName: null }); saveTree(newTree); setConfirmDialog(null); } }); }} className="bg-red-500 text-white p-2 rounded-full shadow-lg hover:bg-red-600 transition" title="Remove Executive Assistant"><Trash2 className="w-3 h-3" /></button>
                                             </div>
                                         )}
-                                        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#4a3189] text-white text-[7px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full shadow whitespace-nowrap pointer-events-none">Executive Assistant</div>
-                                        <img src={rootAssistant.profilePhoto} className="w-[56px] h-[56px] rounded-lg mr-3 object-cover shadow-sm ring-2 ring-white border border-gray-100 flex-shrink-0" alt={rootAssistant.name} />
-                                        <div className="text-left overflow-hidden">
-                                            <p className="text-[10px] font-extrabold text-gray-800 leading-tight group-hover:text-[#4a3189] transition-colors" style={{wordBreak:'break-word'}}>{rootAssistant.name}</p>
-                                            <p className="text-[8px] font-bold text-[#4a3189] leading-tight mt-0.5" style={{wordBreak:'break-word'}}>{rootAssistant.role}</p>
+                                        <div className="absolute -top-4 left-0 right-0 flex justify-center z-20 pointer-events-none">
+                                            <div className="bg-[#4a3189] text-white text-[9px] font-bold uppercase tracking-widest px-4 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30 whitespace-nowrap">Executive Assistant</div>
                                         </div>
+                                        <div className="relative mb-3 w-full group-hover:scale-105 transition-transform duration-300">
+                                            <div className="absolute inset-0 bg-[#dfa634] rounded-2xl blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
+                                            <img src={rootAssistant.profilePhoto} className="relative w-full h-[150px] rounded-2xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootAssistant.name} />
                                         </div>
-                                        <div className="w-8 h-[3px] bg-[#e2d8f0]"></div>
+                                        <p className="text-sm font-extrabold text-gray-800 w-full text-center leading-snug group-hover:text-[#4a3189] transition-colors break-words">{rootAssistant.name}</p>
+                                        <p className="text-[10px] font-bold text-[#dfa634] w-full text-center mt-1 uppercase tracking-wide leading-snug break-words line-clamp-2">{rootAssistant.role}</p>
+                                        </div>
+                                        <div className="w-10 h-[3px] bg-[#e2d8f0]"></div>
                                     </div>
                                 </div>
                                 )}
@@ -1017,10 +1027,11 @@
                                 )}
                                 </div>
 
-                                <ul>
-                                {orgData.children.map(child => renderOrgTree(child, 1))}
-                                </ul>
+                                <ul>{orgData.children.map(child => renderOrgTree(child, 1))}</ul>
                             </li>
+                            ) : (
+                                <li><div className="text-center text-gray-400 font-bold py-20">This chart is empty. Click <span className="text-[#4a3189]">Edit Structure</span> to begin building it.</div></li>
+                            )
                             ) : (() => {
                                 const branch = orgData.children.find(c => c.dept === activeOrgTab);
                                 if (branch) return renderOrgTree(branch, 1);
@@ -1032,203 +1043,191 @@
                     </div>
                 </main>
 
+                {/* ─── Employee profile modal ─────────────────────────────────────────── */}
                 {selectedEmployeeProfile && (
                     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col relative transform transition-all">
-                        <button onClick={() => setSelectedEmployeeProfile(null)} className="absolute top-4 right-4 text-white hover:text-gray-200 hover:bg-black/20 p-2 rounded-full transition z-20"><X className="w-6 h-6" /></button>
-                        
+                        <button onClick={() => { setSelectedEmployeeProfile(null); setPendingPhoto(null); }} className="absolute top-4 right-4 text-white hover:text-gray-200 hover:bg-black/20 p-2 rounded-full transition z-20"><X className="w-6 h-6" /></button>
+
                         <div className="flex items-start p-8 bg-gradient-to-br from-[#292c44] to-[#4a3189] relative overflow-hidden">
                         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 mix-blend-overlay"></div>
-                        
                         <div className="relative z-10 mr-8 flex-shrink-0 flex flex-col items-center">
                             <div className="relative">
-                                <img
-                                    src={selectedEmployeeProfile.profilePhoto}
-                                    className="w-48 h-48 rounded-3xl object-cover shadow-2xl ring-4 ring-white/20 bg-white/10"
-                                    alt={selectedEmployeeProfile.name}
-                                />
-                                {isUploadingPhoto && (
-                                    <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-3xl">
-                                        <Loader2 className="w-8 h-8 text-white animate-spin" />
+                                <img src={pendingPhoto || selectedEmployeeProfile.profilePhoto} className="w-48 h-48 rounded-3xl object-cover shadow-2xl ring-4 ring-white/20 bg-white/10" alt={selectedEmployeeProfile.name} />
+                                {isUploadingPhoto && (<div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-3xl"><Loader2 className="w-8 h-8 text-white animate-spin" /></div>)}
+                                {pendingPhoto && (<div className="absolute -top-2 -left-2 bg-amber-400 text-amber-900 text-[10px] font-black px-2 py-1 rounded-full shadow">UNSAVED</div>)}
+                            </div>
+
+                            <div className="mt-4 flex flex-col gap-2 w-full">
+                                <label className="px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-bold rounded-xl shadow-lg backdrop-blur-md flex items-center justify-center w-full cursor-pointer transition">
+                                    {isUploadingPhoto ? <><Loader2 className="w-3 h-3 mr-2 animate-spin" /> Processing…</> : <><Camera className="w-3 h-3 mr-2" /> Upload New Photo</>}
+                                    <input type="file" accept="image/png,image/jpeg,image/jpg" className="hidden" disabled={isUploadingPhoto} onChange={handlePhotoStage} />
+                                </label>
+                                {/* FIX #4: explicit Save button appears after upload */}
+                                {pendingPhoto && (
+                                    <div className="flex gap-2">
+                                        <button onClick={handlePhotoSave} className="flex-1 px-4 py-2.5 bg-green-500 hover:bg-green-600 text-white text-xs font-bold rounded-xl shadow-lg flex items-center justify-center transition"><Save className="w-3.5 h-3.5 mr-2" /> Save Photo</button>
+                                        <button onClick={() => setPendingPhoto(null)} className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-bold rounded-xl transition">Cancel</button>
                                     </div>
                                 )}
-                            </div>
-                            
-                            <div className="mt-4 flex flex-col gap-2 w-full">
-                                <label className="photo-upload-btn px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-bold rounded-xl shadow-lg backdrop-blur-md flex items-center justify-center w-full cursor-pointer">
-                                    {isUploadingPhoto
-                                        ? <><Loader2 className="w-3 h-3 mr-2 animate-spin" /> Processing…</>
-                                        : <><Camera className="w-3 h-3 mr-2" /> Upload New Photo</>
-                                    }
-                                    <input
-                                        type="file"
-                                        accept="image/png,image/jpeg,image/jpg"
-                                        className="hidden"
-                                        disabled={isUploadingPhoto}
-                                        onChange={(e) => handlePhotoUpload(e, selectedEmployeeProfile.id)}
-                                    />
-                                </label>
-                                <button
-                                    onClick={() => handlePhotoDelete(selectedEmployeeProfile)}
-                                    disabled={isUploadingPhoto}
-                                    className="photo-upload-btn px-5 py-2.5 bg-red-500/20 hover:bg-red-500/40 text-white border border-red-400/30 text-xs font-bold rounded-xl shadow-lg backdrop-blur-md flex items-center justify-center w-full transition disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    <Trash2 className="w-3 h-3 mr-2" /> Remove Photo
-                                </button>
+                                <button onClick={() => handlePhotoDelete(selectedEmployeeProfile)} disabled={isUploadingPhoto} className="px-5 py-2.5 bg-red-500/20 hover:bg-red-500/40 text-white border border-red-400/30 text-xs font-bold rounded-xl shadow-lg backdrop-blur-md flex items-center justify-center w-full transition disabled:opacity-50 disabled:cursor-not-allowed"><Trash2 className="w-3 h-3 mr-2" /> Remove Photo</button>
                             </div>
                         </div>
 
                         <div className="z-10 flex flex-col justify-center min-h-[12rem] flex-1">
-                            <h2 className="text-3xl font-black text-white">{selectedEmployeeProfile.name}</h2>
-                            <p className="text-[#dfa634] font-bold tracking-widest uppercase text-sm mt-2">{selectedEmployeeProfile.role}</p>
+                            <h2 className="text-3xl font-black text-white break-words">{selectedEmployeeProfile.name}</h2>
+                            <p className="text-[#dfa634] font-bold tracking-wide uppercase text-sm mt-2 break-words">{selectedEmployeeProfile.role}</p>
                             <div className="mt-6 flex flex-col gap-3 text-white/90 text-sm">
-                            <span className="flex items-center"><Building className="w-4 h-4 mr-3 opacity-70"/> {selectedEmployeeProfile.dept}</span>
-                            <span className="flex items-center"><Mail className="w-4 h-4 mr-3 opacity-70"/> {selectedEmployeeProfile.email}</span>
+                            <span className="flex items-center break-all"><Building className="w-4 h-4 mr-3 opacity-70 flex-shrink-0"/> {selectedEmployeeProfile.dept}</span>
+                            <span className="flex items-center break-all"><Mail className="w-4 h-4 mr-3 opacity-70 flex-shrink-0"/> {selectedEmployeeProfile.email}</span>
                             </div>
                         </div>
                         </div>
-                        
+
                         <div className="p-8 space-y-6 bg-gray-50/50">
                         <div className="grid grid-cols-2 gap-y-6 gap-x-8">
-                            <div>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 flex items-center"><Building className="w-3 h-3 mr-1" /> Branch Office</p>
-                            <p className="text-sm font-bold text-gray-800">{selectedEmployeeProfile.branchOffice}</p>
-                            </div>
-                            <div>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 flex items-center"><Phone className="w-3 h-3 mr-1" /> Contact Number</p>
-                            <p className="text-sm font-medium text-gray-800">{selectedEmployeeProfile.contactNumber}</p>
-                            </div>
-                            <div>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 flex items-center"><User className="w-3 h-3 mr-1" /> Status / Type</p>
-                            <p className="text-sm font-medium text-gray-800">{selectedEmployeeProfile.insurance}</p>
-                            </div>
-                            <div>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 flex items-center"><Calendar className="w-3 h-3 mr-1" /> Join Date</p>
-                            <p className="text-sm font-medium text-gray-800">{selectedEmployeeProfile.joinDate}</p>
-                            </div>
+                            <div><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 flex items-center"><Building className="w-3 h-3 mr-1" /> Branch Office</p><p className="text-sm font-bold text-gray-800">{selectedEmployeeProfile.branchOffice}</p></div>
+                            <div><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 flex items-center"><Phone className="w-3 h-3 mr-1" /> Contact Number</p><p className="text-sm font-medium text-gray-800">{selectedEmployeeProfile.contactNumber}</p></div>
+                            <div><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 flex items-center"><User className="w-3 h-3 mr-1" /> Status / Type</p><p className="text-sm font-medium text-gray-800">{selectedEmployeeProfile.insurance}</p></div>
+                            <div><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 flex items-center"><Calendar className="w-3 h-3 mr-1" /> Join Date</p><p className="text-sm font-medium text-gray-800">{selectedEmployeeProfile.joinDate}</p></div>
                         </div>
                         </div>
-                        
+
                         <div className="p-6 bg-white border-t border-gray-100 flex justify-between rounded-b-3xl space-x-4">
-                        <button 
-                            onClick={() => {
+                        <button onClick={() => {
                             setConfirmDialog({
-                                message: `Are you sure you want to permanently delete ${selectedEmployeeProfile.name}? This will remove them from all departments.`,
+                                message: `Are you sure you want to permanently delete ${selectedEmployeeProfile.name}? This will remove them from all departments and the card library.`,
                                 confirmLabel: 'Delete Employee', confirmClass: 'bg-red-500 hover:bg-red-600',
                                 onConfirm: () => {
                                     const newEmps = allEmployeesList.filter(e => e.id !== selectedEmployeeProfile.id);
                                     const removeEmp = (tree) => {
-                                        let updated = { ...tree };
-                                        if (updated.managerName === selectedEmployeeProfile.name) updated.managerName = null;
-                                        if (updated.assistantName === selectedEmployeeProfile.name) updated.assistantName = null;
-                                        if (updated.staffNames) updated.staffNames = updated.staffNames.filter(n => n !== selectedEmployeeProfile.name);
-                                        if (updated.children) updated.children = updated.children.map(removeEmp);
-                                        return updated;
+                                        let u = { ...tree };
+                                        if (u.managerName === selectedEmployeeProfile.name) u.managerName = null;
+                                        if (u.assistantName === selectedEmployeeProfile.name) u.assistantName = null;
+                                        if (u.staffNames) u.staffNames = u.staffNames.filter(n => n !== selectedEmployeeProfile.name);
+                                        if (u.children) u.children = u.children.map(removeEmp);
+                                        return u;
                                     };
-                                    const newTree = removeEmp(orgData);
-                                    saveToCloud(newTree, newEmps);
-                                    setSelectedEmployeeProfile(null);
-                                    setConfirmDialog(null);
+                                    const newCharts = {};
+                                    Object.entries(charts).forEach(([id, c]) => { newCharts[id] = { ...c, tree: removeEmp(c.tree) }; });
+                                    saveAll(newCharts, newEmps);
+                                    setSelectedEmployeeProfile(null); setPendingPhoto(null); setConfirmDialog(null);
                                 }
                             });
-                            }}
-                            className="px-6 py-3 bg-red-50 text-red-600 border border-red-200 rounded-xl text-sm font-bold hover:bg-red-100 transition shadow-sm flex items-center"
-                        >
-                            <Trash2 className="w-4 h-4 mr-2" /> Delete Employee
-                        </button>
-                        <button 
-                            onClick={() => setSelectedEmployeeProfile(null)}
-                            className="px-8 py-3 bg-gray-100 border border-gray-200 text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-200 hover:text-gray-900 transition shadow-sm flex-1"
-                        >
-                            Close Profile
-                        </button>
+                        }} className="px-6 py-3 bg-red-50 text-red-600 border border-red-200 rounded-xl text-sm font-bold hover:bg-red-100 transition shadow-sm flex items-center"><Trash2 className="w-4 h-4 mr-2" /> Delete Employee</button>
+                        <button onClick={() => { setSelectedEmployeeProfile(null); setPendingPhoto(null); }} className="px-8 py-3 bg-gray-100 border border-gray-200 text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-200 hover:text-gray-900 transition shadow-sm flex-1">Close Profile</button>
                         </div>
                     </div>
                     </div>
                 )}
 
+                {/* ─── Card Library (FIX #8) ──────────────────────────────────────────── */}
+                {showCardLibrary && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+                        <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gradient-to-r from-[#4a3189] to-[#6d48c7] text-white">
+                        <h3 className="text-lg font-bold flex items-center"><Library className="w-5 h-5 mr-2" /> Card Library <span className="ml-2 text-xs font-medium opacity-80">({allEmployeesList.length} cards · shared across all charts)</span></h3>
+                        <button onClick={() => setShowCardLibrary(false)} className="text-white/80 hover:text-white transition"><X className="w-5 h-5" /></button>
+                        </div>
+                        <div className="p-4 border-b border-gray-100 flex items-center gap-3">
+                            <input value={librarySearch} onChange={(e)=>setLibrarySearch(e.target.value)} placeholder="Search by name or role…" className="flex-1 border border-gray-200 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none" />
+                            <button onClick={() => { setShowCardLibrary(false); setNewEmployeeForm({ parentId: null, name: '', role: '', gender: 'Male' }); }} className="px-4 py-2.5 bg-[#dfa634] hover:bg-[#c9942a] text-white text-sm font-bold rounded-xl flex items-center shadow-md transition whitespace-nowrap"><UserPlus className="w-4 h-4 mr-2" /> New Card</button>
+                        </div>
+                        <div className="p-5 overflow-y-auto custom-scrollbar grid grid-cols-2 md:grid-cols-3 gap-3">
+                            {libraryFiltered.map(emp => (
+                                <div key={emp.id} className="border border-gray-200 rounded-xl p-3 flex items-center gap-3 hover:border-[#4a3189]/40 hover:shadow-md transition group bg-white">
+                                    <img src={emp.profilePhoto} className="w-14 h-14 rounded-lg object-cover flex-shrink-0 ring-1 ring-gray-100" alt={emp.name} />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-bold text-gray-800 truncate" title={emp.name}>{emp.name}</p>
+                                        <p className="text-[11px] text-[#dfa634] font-medium line-clamp-2" title={emp.role}>{emp.role}</p>
+                                        <p className="text-[10px] text-gray-400 truncate">{emp.dept}</p>
+                                    </div>
+                                    <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition">
+                                        <button onClick={() => { setShowCardLibrary(false); setSelectedEmployeeProfile(emp); setPendingPhoto(null); }} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg" title="View / edit profile"><Edit className="w-3.5 h-3.5" /></button>
+                                        <button onClick={() => duplicateEmployee(emp)} className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg" title="Duplicate card"><Copy className="w-3.5 h-3.5" /></button>
+                                        <button onClick={() => deleteLibraryEmployee(emp)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg" title="Delete card"><Trash2 className="w-3.5 h-3.5" /></button>
+                                    </div>
+                                </div>
+                            ))}
+                            {libraryFiltered.length === 0 && <p className="col-span-3 text-center text-gray-400 py-10 text-sm font-medium">No matching cards.</p>}
+                        </div>
+                    </div>
+                    </div>
+                )}
+
+                {/* ─── New chart dialog (FIX #7) ──────────────────────────────────────── */}
+                {newChartName !== null && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+                        <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gradient-to-r from-[#4a3189] to-[#6d48c7] text-white">
+                        <h3 className="text-lg font-bold flex items-center"><FolderPlus className="w-5 h-5 mr-2" /> New Organization Chart</h3>
+                        <button onClick={() => setNewChartName(null)} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
+                        </div>
+                        <div className="p-6 space-y-3">
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">Organization / Company Name</label>
+                            <input autoFocus value={newChartName} onChange={(e)=>setNewChartName(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter' && newChartName.trim()) createChart(newChartName.trim()); }} placeholder="e.g. Acme Corp" className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none" />
+                            <p className="text-xs text-gray-500">A blank chart will be created. It reuses the same shared card library, so you can drop existing people straight in.</p>
+                        </div>
+                        <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end space-x-3">
+                            <button onClick={() => setNewChartName(null)} className="px-5 py-2.5 text-sm font-bold text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-xl transition">Cancel</button>
+                            <button disabled={!newChartName.trim()} onClick={() => createChart(newChartName.trim())} className="px-6 py-2.5 text-white text-sm font-bold rounded-xl transition bg-[#4a3189] hover:bg-[#38236b] shadow-md disabled:opacity-50">Create Chart</button>
+                        </div>
+                    </div>
+                    </div>
+                )}
+
+                {/* ─── Add menu ───────────────────────────────────────────────────────── */}
                 {addMenuConfig && (
                     <div className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col relative transform transition-all">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col relative">
                         <button onClick={() => setAddMenuConfig(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-800 hover:bg-gray-100 p-2 rounded-full transition z-10"><X className="w-5 h-5" /></button>
                         <div className="p-6 pt-8 border-b border-gray-100 bg-gray-50 text-center">
                         <h3 className="text-xl font-black text-gray-800">Add to Department</h3>
                         <p className="text-sm font-bold text-[#dfa634] mt-1">{addMenuConfig.deptName}</p>
                         </div>
                         <div className="p-6 space-y-4">
-                        <button 
-                            onClick={() => {
-                            setEditingOrgNode('new_' + addMenuConfig.parentId); 
-                            setOrgNodeForm({ id: `node_${Date.now()}`, dept: 'New Sub-Department', managerName: '', staffNames: [] });
-                            setAddMenuConfig(null);
-                            }}
-                            className="w-full flex items-center p-4 bg-white border-2 border-gray-100 rounded-xl hover:border-[#4a3189] hover:bg-purple-50 hover:shadow-md transition group"
-                        >
-                            <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center text-[#4a3189] group-hover:scale-110 transition mr-4">
-                            <Network className="w-6 h-6" />
-                            </div>
-                            <div className="text-left">
-                            <h4 className="font-bold text-gray-800 group-hover:text-[#4a3189]">New Sub-Department</h4>
-                            <p className="text-xs text-gray-500 mt-0.5">Create a branching division.</p>
-                            </div>
+                        <button onClick={() => { setEditingOrgNode('new_' + addMenuConfig.parentId); setOrgNodeForm({ id: `node_${Date.now()}`, dept: 'New Sub-Department', managerName: '', staffNames: [] }); setAddMenuConfig(null); }} className="w-full flex items-center p-4 bg-white border-2 border-gray-100 rounded-xl hover:border-[#4a3189] hover:bg-purple-50 hover:shadow-md transition group">
+                            <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center text-[#4a3189] group-hover:scale-110 transition mr-4"><Network className="w-6 h-6" /></div>
+                            <div className="text-left"><h4 className="font-bold text-gray-800 group-hover:text-[#4a3189]">New Sub-Department</h4><p className="text-xs text-gray-500 mt-0.5">Create a branching division.</p></div>
                         </button>
-                        
-                        <button 
-                            onClick={() => {
-                            setNewEmployeeForm({ parentId: addMenuConfig.parentId, name: '', role: '', gender: 'Male' });
-                            setAddMenuConfig(null);
-                            }}
-                            className="w-full flex items-center p-4 bg-white border-2 border-gray-100 rounded-xl hover:border-[#dfa634] hover:bg-yellow-50 hover:shadow-md transition group"
-                        >
-                            <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center text-[#dfa634] group-hover:scale-110 transition mr-4">
-                            <UserPlus className="w-6 h-6" />
-                            </div>
-                            <div className="text-left">
-                            <h4 className="font-bold text-gray-800 group-hover:text-[#dfa634]">New Team Member</h4>
-                            <p className="text-xs text-gray-500 mt-0.5">Add staff directly here.</p>
-                            </div>
+                        <button onClick={() => { setShowCardLibrary(false); const parentId = addMenuConfig.parentId; setAddMenuConfig(null); setEditingOrgNode(parentId); const node = (function find(t){ if(t.id===parentId) return t; if(t.children) for(const c of t.children){ const r=find(c); if(r) return r;} return null;})(orgData); if(node) setOrgNodeForm({ id: node.id, dept: node.dept, managerName: node.managerName || '', staffNames: node.staffNames || [], assistantName: node.assistantName || '' }); }} className="w-full flex items-center p-4 bg-white border-2 border-gray-100 rounded-xl hover:border-[#4a3189] hover:bg-purple-50 hover:shadow-md transition group">
+                            <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center text-[#4a3189] group-hover:scale-110 transition mr-4"><Library className="w-6 h-6" /></div>
+                            <div className="text-left"><h4 className="font-bold text-gray-800 group-hover:text-[#4a3189]">Assign Existing Cards</h4><p className="text-xs text-gray-500 mt-0.5">Pick people already in the library.</p></div>
+                        </button>
+                        <button onClick={() => { setNewEmployeeForm({ parentId: addMenuConfig.parentId, name: '', role: '', gender: 'Male' }); setAddMenuConfig(null); }} className="w-full flex items-center p-4 bg-white border-2 border-gray-100 rounded-xl hover:border-[#dfa634] hover:bg-yellow-50 hover:shadow-md transition group">
+                            <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center text-[#dfa634] group-hover:scale-110 transition mr-4"><UserPlus className="w-6 h-6" /></div>
+                            <div className="text-left"><h4 className="font-bold text-gray-800 group-hover:text-[#dfa634]">New Team Member</h4><p className="text-xs text-gray-500 mt-0.5">Create a brand-new card here.</p></div>
                         </button>
                         </div>
                     </div>
                     </div>
                 )}
 
+                {/* ─── New employee form ──────────────────────────────────────────────── */}
                 {newEmployeeForm && (
                     <div className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4 backdrop-blur-sm">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
                         <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gradient-to-r from-[#dfa634] to-[#f5c76a] text-white">
-                        <h3 className="text-lg font-bold flex items-center"><UserPlus className="w-5 h-5 mr-2" /> Add New Team Member</h3>
+                        <h3 className="text-lg font-bold flex items-center"><UserPlus className="w-5 h-5 mr-2" /> {newEmployeeForm.parentId ? 'Add New Team Member' : 'New Library Card'}</h3>
                         <button onClick={() => setNewEmployeeForm(null)} className="text-white/80 hover:text-white transition"><X className="w-5 h-5" /></button>
                         </div>
                         <div className="p-6 space-y-4">
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Full Name</label>
-                            <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#dfa634]/50 focus:border-[#dfa634] outline-none shadow-sm transition"
-                            value={newEmployeeForm.name} onChange={(e) => setNewEmployeeForm({...newEmployeeForm, name: e.target.value})} placeholder="e.g. John Doe" />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Job Title / Role</label>
-                            <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#dfa634]/50 focus:border-[#dfa634] outline-none shadow-sm transition"
-                            value={newEmployeeForm.role} onChange={(e) => setNewEmployeeForm({...newEmployeeForm, role: e.target.value})} placeholder="e.g. Marketing Assistant" />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Gender (For Auto-Avatar)</label>
-                            <select className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#dfa634]/50 focus:border-[#dfa634] outline-none shadow-sm transition bg-white"
-                            value={newEmployeeForm.gender} onChange={(e) => setNewEmployeeForm({...newEmployeeForm, gender: e.target.value})}>
-                            <option value="Male">Male</option>
-                            <option value="Female">Female</option>
-                            </select>
+                        <div><label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Full Name</label><input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#dfa634]/50 focus:border-[#dfa634] outline-none shadow-sm transition" value={newEmployeeForm.name} onChange={(e) => setNewEmployeeForm({...newEmployeeForm, name: e.target.value})} placeholder="e.g. John Doe" /></div>
+                        <div><label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Job Title / Role</label><input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#dfa634]/50 focus:border-[#dfa634] outline-none shadow-sm transition" value={newEmployeeForm.role} onChange={(e) => setNewEmployeeForm({...newEmployeeForm, role: e.target.value})} placeholder="e.g. Marketing Assistant" /></div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div><label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Department</label><input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#dfa634]/50 focus:border-[#dfa634] outline-none shadow-sm transition" value={newEmployeeForm.dept || ''} onChange={(e) => setNewEmployeeForm({...newEmployeeForm, dept: e.target.value})} placeholder="e.g. Marketing" /></div>
+                            <div><label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Gender (avatar)</label><select className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#dfa634]/50 focus:border-[#dfa634] outline-none shadow-sm transition bg-white" value={newEmployeeForm.gender} onChange={(e) => setNewEmployeeForm({...newEmployeeForm, gender: e.target.value})}><option value="Male">Male</option><option value="Female">Female</option></select></div>
                         </div>
                         </div>
                         <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end space-x-3">
                         <button onClick={() => setNewEmployeeForm(null)} className="px-5 py-2.5 text-sm font-bold text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-xl transition">Cancel</button>
-                        <button onClick={handleAddNewEmployee} className="px-6 py-2.5 text-white text-sm font-bold rounded-xl transition bg-[#dfa634] hover:bg-[#c9942a] shadow-md hover:shadow-lg">Create Employee</button>
+                        <button onClick={handleAddNewEmployee} className="px-6 py-2.5 text-white text-sm font-bold rounded-xl transition bg-[#dfa634] hover:bg-[#c9942a] shadow-md hover:shadow-lg flex items-center"><Save className="w-4 h-4 mr-2" /> Save Card</button>
                         </div>
                     </div>
                     </div>
                 )}
 
-                {/* ─── Executive Assistant management dialog ─────────────────────────── */}
+                {/* ─── Executive Assistant dialog ─────────────────────────────────────── */}
                 {assistantForm && (
                     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
@@ -1240,12 +1239,9 @@
                         <p className="text-sm text-gray-600">Assign, change, or remove the Executive Assistant reporting directly under the head of this structure.</p>
                         <div>
                             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Select Executive Assistant</label>
-                            <select className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none shadow-sm transition bg-white"
-                            value={assistantForm.assistantName} onChange={(e) => setAssistantForm({...assistantForm, assistantName: e.target.value})}>
+                            <select className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none shadow-sm transition bg-white" value={assistantForm.assistantName} onChange={(e) => setAssistantForm({...assistantForm, assistantName: e.target.value})}>
                             <option value="">-- No Executive Assistant --</option>
-                            {allEmployeesList.map(emp => (
-                                <option key={emp.id} value={emp.name}>{emp.name} ({emp.role})</option>
-                            ))}
+                            {allEmployeesList.map(emp => (<option key={emp.id} value={emp.name}>{emp.name} ({emp.role})</option>))}
                             </select>
                         </div>
                         </div>
@@ -1257,96 +1253,46 @@
                     </div>
                 )}
 
+                {/* ─── Edit department dialog ─────────────────────────────────────────── */}
                 {editingOrgNode && (
                     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
                         <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gradient-to-r from-[#292c44] to-[#3a3e5c] text-white flex-shrink-0">
-                        <h3 className="text-lg font-bold flex items-center">
-                            <Network className="w-5 h-5 mr-2 text-[#dfa634]" /> 
-                            {editingOrgNode.startsWith('new_') ? 'Add New Department' : 'Edit Department'}
-                        </h3>
+                        <h3 className="text-lg font-bold flex items-center"><Network className="w-5 h-5 mr-2 text-[#dfa634]" /> {editingOrgNode.startsWith('new_') ? 'Add New Department' : 'Edit Department'}</h3>
                         <button onClick={() => setEditingOrgNode(null)} className="text-white/60 hover:text-white transition"><X className="w-5 h-5" /></button>
                         </div>
-                        
                         <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6 bg-gray-50/30">
+                        <div><label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Department Name</label><input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none shadow-sm transition" value={orgNodeForm.dept} onChange={(e) => setOrgNodeForm({...orgNodeForm, dept: e.target.value})} /></div>
+                        <div><label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Department Manager</label><select className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none shadow-sm transition bg-white" value={orgNodeForm.managerName} onChange={(e) => setOrgNodeForm({...orgNodeForm, managerName: e.target.value})}><option value="">-- No Manager --</option>{allEmployeesList.map(emp => (<option key={emp.id} value={emp.name}>{emp.name} ({emp.role})</option>))}</select></div>
+                        {orgNodeForm.id === 'root' && (<div><label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Executive Assistant</label><select className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none shadow-sm transition bg-white" value={orgNodeForm.assistantName || ''} onChange={(e) => setOrgNodeForm({...orgNodeForm, assistantName: e.target.value})}><option value="">-- No Assistant --</option>{allEmployeesList.map(emp => (<option key={emp.id} value={emp.name}>{emp.name} ({emp.role})</option>))}</select></div>)}
                         <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Department Name</label>
-                            <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none shadow-sm transition"
-                            value={orgNodeForm.dept} onChange={(e) => setOrgNodeForm({...orgNodeForm, dept: e.target.value})} />
-                        </div>
-                        
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Department Manager</label>
-                            <select className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none shadow-sm transition bg-white"
-                            value={orgNodeForm.managerName} onChange={(e) => setOrgNodeForm({...orgNodeForm, managerName: e.target.value})}>
-                            <option value="">-- No Manager --</option>
-                            {allEmployeesList.map(emp => (
-                                <option key={emp.id} value={emp.name}>{emp.name} ({emp.role})</option>
-                            ))}
-                            </select>
-                        </div>
-
-                        {orgNodeForm.id === 'root' && (
-                            <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Executive Assistant</label>
-                            <select className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#4a3189]/50 focus:border-[#4a3189] outline-none shadow-sm transition bg-white"
-                                value={orgNodeForm.assistantName || ''} onChange={(e) => setOrgNodeForm({...orgNodeForm, assistantName: e.target.value})}>
-                                <option value="">-- No Assistant --</option>
-                                {allEmployeesList.map(emp => (
-                                <option key={emp.id} value={emp.name}>{emp.name} ({emp.role})</option>
-                                ))}
-                            </select>
+                            <div className="flex items-center justify-between mb-3 pb-2 border-b border-gray-200">
+                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">Assign Staff Members</label>
+                                <span className="text-[10px] text-gray-400">tip: reorder by dragging on the chart</span>
                             </div>
-                        )}
-
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 pb-2 border-b border-gray-200">Assign Staff Members</label>
                             <div className="bg-white border border-gray-200 rounded-xl p-2 h-64 overflow-y-auto custom-scrollbar shadow-inner">
                             {allEmployeesList.map(emp => {
                                 if (emp.name === orgNodeForm.managerName || emp.name === orgNodeForm.assistantName) return null;
                                 const isSelected = orgNodeForm.staffNames.includes(emp.name);
                                 return (
                                 <label key={emp.id} className={`flex items-center space-x-3 p-2.5 rounded-lg border cursor-pointer transition mb-1 ${isSelected ? 'bg-purple-50/50 border-[#4a3189]/30' : 'border-transparent hover:bg-gray-50'}`}>
-                                    <input type="checkbox" className="w-4 h-4 text-[#4a3189] rounded border-gray-300 focus:ring-[#4a3189] cursor-pointer"
-                                    checked={isSelected}
-                                    onChange={(e) => {
-                                        if (e.target.checked) setOrgNodeForm({...orgNodeForm, staffNames: [...orgNodeForm.staffNames, emp.name]});
-                                        else setOrgNodeForm({...orgNodeForm, staffNames: orgNodeForm.staffNames.filter(name => name !== emp.name)});
-                                    }} />
+                                    <input type="checkbox" className="w-4 h-4 text-[#4a3189] rounded border-gray-300 focus:ring-[#4a3189] cursor-pointer" checked={isSelected} onChange={(e) => { if (e.target.checked) setOrgNodeForm({...orgNodeForm, staffNames: [...orgNodeForm.staffNames, emp.name]}); else setOrgNodeForm({...orgNodeForm, staffNames: orgNodeForm.staffNames.filter(name => name !== emp.name)}); }} />
                                     <img src={emp.profilePhoto} className="w-10 h-10 rounded-lg object-cover border border-gray-100" alt="" />
-                                    <div className="flex-1 overflow-hidden">
-                                    <p className="text-xs font-bold text-gray-800 truncate leading-tight">{emp.name}</p>
-                                    <p className="text-[10px] text-gray-500 truncate leading-tight mt-0.5">{emp.role} • {emp.dept}</p>
-                                    </div>
-                                </label>
-                                );
+                                    <div className="flex-1 overflow-hidden"><p className="text-xs font-bold text-gray-800 truncate leading-tight">{emp.name}</p><p className="text-[10px] text-gray-500 truncate leading-tight mt-0.5">{emp.role} • {emp.dept}</p></div>
+                                </label>);
                             })}
                             </div>
-                            <div className="text-right mt-2 text-xs text-gray-500">
-                            <strong className="text-[#4a3189]">{orgNodeForm.staffNames.length}</strong> staff selected
-                            </div>
+                            <div className="text-right mt-2 text-xs text-gray-500"><strong className="text-[#4a3189]">{orgNodeForm.staffNames.length}</strong> staff selected</div>
                         </div>
                         </div>
-                        
                         <div className="p-5 border-t border-gray-100 bg-white flex justify-end space-x-3 flex-shrink-0">
                         <button onClick={() => setEditingOrgNode(null)} className="px-5 py-2.5 text-sm font-bold text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition">Cancel</button>
-                        <button 
-                            disabled={!orgNodeForm.dept}
-                            onClick={() => {
-                                let newTree;
-                                if (editingOrgNode.startsWith('new_')) {
-                                    const parentId = editingOrgNode.replace('new_', '');
-                                    newTree = addNode(orgData, parentId, orgNodeForm);
-                                } else {
-                                    newTree = updateNode(orgData, editingOrgNode, orgNodeForm);
-                                }
-                                saveToCloud(newTree, null);
-                                setEditingOrgNode(null);
-                            }}
-                            className="px-6 py-2.5 text-white text-sm font-bold rounded-xl transition bg-[#4a3189] hover:bg-[#38236b] hover:shadow-lg hover:-translate-y-0.5 disabled:opacity-50 disabled:transform-none shadow-sm flex items-center"
-                        >
-                            <Save className="w-4 h-4 mr-2" /> Save Department
-                        </button>
+                        <button disabled={!orgNodeForm.dept} onClick={() => {
+                            let newTree;
+                            if (editingOrgNode.startsWith('new_')) { const parentId = editingOrgNode.replace('new_', ''); newTree = addNode(orgData, parentId, orgNodeForm); }
+                            else { newTree = updateNode(orgData, editingOrgNode, orgNodeForm); }
+                            saveTree(newTree); setEditingOrgNode(null);
+                        }} className="px-6 py-2.5 text-white text-sm font-bold rounded-xl transition bg-[#4a3189] hover:bg-[#38236b] hover:shadow-lg hover:-translate-y-0.5 disabled:opacity-50 disabled:transform-none shadow-sm flex items-center"><Save className="w-4 h-4 mr-2" /> Save Department</button>
                         </div>
                     </div>
                     </div>
@@ -1354,7 +1300,7 @@
 
                 {alertDialog && (
                     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center transform transition-all">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center">
                         <h3 className="text-lg font-bold text-gray-800 mb-2">System Notice</h3>
                         <p className="text-sm text-gray-600 mb-6">{alertDialog}</p>
                         <button onClick={() => setAlertDialog(null)} className="px-6 py-2.5 bg-[#4a3189] text-white rounded-xl font-bold hover:bg-[#38236b] shadow-md hover:shadow-lg transition w-full">Okay</button>
@@ -1364,17 +1310,13 @@
 
                 {confirmDialog && (
                     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center transform transition-all">
-                        <div className={`w-12 h-12 ${confirmDialog.confirmClass?.includes('orange') ? 'bg-orange-100' : 'bg-red-100'} rounded-full flex items-center justify-center mx-auto mb-4`}>
-                        <Trash2 className={`w-6 h-6 ${confirmDialog.confirmClass?.includes('orange') ? 'text-orange-500' : 'text-red-500'}`} />
-                        </div>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center">
+                        <div className={`w-12 h-12 ${confirmDialog.confirmClass?.includes('orange') ? 'bg-orange-100' : 'bg-red-100'} rounded-full flex items-center justify-center mx-auto mb-4`}><Trash2 className={`w-6 h-6 ${confirmDialog.confirmClass?.includes('orange') ? 'text-orange-500' : 'text-red-500'}`} /></div>
                         <h3 className="text-lg font-bold text-gray-800 mb-2">Confirm Action</h3>
                         <p className="text-sm text-gray-600 mb-6">{confirmDialog.message}</p>
                         <div className="flex space-x-3 justify-center">
                         <button onClick={() => setConfirmDialog(null)} className="px-6 py-2.5 bg-gray-100 text-gray-700 rounded-xl font-bold hover:bg-gray-200 transition flex-1">Cancel</button>
-                        <button onClick={confirmDialog.onConfirm} className={`px-6 py-2.5 text-white rounded-xl font-bold shadow-md hover:shadow-lg transition flex-1 ${confirmDialog.confirmClass || 'bg-red-500 hover:bg-red-600'}`}>
-                            {confirmDialog.confirmLabel || 'Confirm'}
-                        </button>
+                        <button onClick={confirmDialog.onConfirm} className={`px-6 py-2.5 text-white rounded-xl font-bold shadow-md hover:shadow-lg transition flex-1 ${confirmDialog.confirmClass || 'bg-red-500 hover:bg-red-600'}`}>{confirmDialog.confirmLabel || 'Confirm'}</button>
                         </div>
                     </div>
                     </div>
