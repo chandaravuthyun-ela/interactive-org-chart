@@ -261,7 +261,7 @@
                     if (right > maxRight) maxRight = right;
                     if (bottom > maxBottom) maxBottom = bottom;
                 });
-                const PAD = 48;
+                const PAD = 100; // Increased padding from 48 to 100 to prevent bottom edge cropping
                 const contentW = Math.ceil(maxRight - minLeft + PAD * 2);
                 const contentH = Math.ceil(maxBottom - minTop + PAD * 2);
                 wrapper.style.width = contentW + 'px';
@@ -342,7 +342,7 @@
                 onDrop={onDrop}
                 onDragEnd={onDragEnd}
                 onClick={(e) => { e.stopPropagation(); if (onClick) onClick(s); }}
-                className={`relative bg-white border shadow-sm rounded-xl flex items-center w-[210px] cursor-pointer transition-all group/staff overflow-hidden
+                className={`relative bg-white border shadow-sm rounded-xl flex items-center w-[210px] cursor-pointer transition-all group/staff
                     ${isDragOver ? 'border-[#4a3189] ring-2 ring-[#4a3189]/40' : 'border-gray-200/80 hover:border-[#dfa634]/60 hover:shadow-md'}
                     ${isDragging ? 'opacity-40' : ''}`}
             >
@@ -355,9 +355,9 @@
                     {/* Fuller square image replacing the old portrait shape */}
                     <img src={s.profilePhoto} className="w-[56px] h-[56px] object-cover rounded-lg ring-1 ring-gray-100 group-hover/staff:brightness-105 transition-all" alt={s.name} />
                 </div>
-                <div className="flex-1 min-w-0 pr-3 py-2 text-left">
-                    <p className="text-[11px] font-extrabold text-gray-800 leading-snug break-words group-hover/staff:text-[#4a3189] truncate" title={s.name}>{s.name}</p>
-                    <p className="text-[9px] font-medium text-[#dfa634] leading-snug line-clamp-2 mt-0.5" title={s.role}>{s.role}</p>
+                <div className="flex-1 min-w-0 pr-3 py-3 text-left">
+                    <p className="text-[11px] font-extrabold text-gray-800 leading-normal break-words group-hover/staff:text-[#4a3189]" title={s.name}>{s.name}</p>
+                    <p className="text-[9px] font-medium text-[#dfa634] leading-normal break-words mt-1 pb-1" title={s.role}>{s.role}</p>
                 </div>
             </div>
         );
@@ -431,7 +431,7 @@
                     {/* Manager Card with Perfect Square Photo */}
                     <div
                         onClick={(e) => { e.stopPropagation(); if(manager && onEmployeeClick) onEmployeeClick(manager); }}
-                        className={`pt-10 pb-5 px-5 flex flex-col items-center rounded-t-3xl ${manager ? 'cursor-pointer' : ''}`}
+                        className={`pt-10 pb-8 px-5 flex flex-col items-center rounded-t-3xl ${manager ? 'cursor-pointer' : ''}`}
                     >
                         {manager ? (
                         <>
@@ -440,8 +440,8 @@
                             {/* Made photo a square (88x88) to look fuller without distorting */}
                             <img src={manager.profilePhoto} className="relative w-[88px] h-[88px] rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={manager.name} />
                             </div>
-                            <p className="text-sm font-extrabold text-gray-800 w-full text-center leading-snug group-hover:text-[#4a3189] transition-colors break-words">{manager.name}</p>
-                            <p className="text-[10px] font-bold text-[#dfa634] w-full text-center mt-1 uppercase tracking-wide leading-snug break-words line-clamp-2">{manager.role}</p>
+                            <p className="text-sm font-extrabold text-gray-800 w-full text-center leading-normal group-hover:text-[#4a3189] transition-colors break-words">{manager.name}</p>
+                            <p className="text-[10px] font-bold text-[#dfa634] w-full text-center mt-1.5 uppercase tracking-wide leading-normal break-words pb-1">{manager.role}</p>
                         </>
                         ) : null}
                     </div>
@@ -1040,13 +1040,13 @@
                                         {rootAssistant && (
                                         <div className="absolute flex items-center" style={{ left: '50%', top: '60px', transform: 'translateY(-50%)', zIndex: 15 }}>
                                             {/* Visible horizontal line connecting to the EA - Lengthened to move it away */}
-                                            <div className="bg-[#1e40af]" style={{ width: '130px', height: '4px' }}></div>
-                                            {/* EA Card aligned seamlessly */}
-                                            <div onClick={(e) => { e.stopPropagation(); setSelectedEmployeeProfile(rootAssistant); setPendingPhoto(null); }}
-                                            className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-56 flex flex-col items-center relative group/ea hover:shadow-2xl hover:-translate-y-1 transition-all cursor-pointer pt-6 pb-4 px-4" style={{overflow:'visible'}}>
-                                            {isEditingOrg && (
-                                                <div className="absolute -top-4 -right-4 flex space-x-1 z-30" data-html2canvas-ignore="true">
-                                                <button onClick={(e) => { e.stopPropagation(); setAssistantForm({ nodeId: orgData.id, assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Executive Assistant"><Edit className="w-3 h-3" /></button>
+                                        <div className="bg-[#1e40af]" style={{ width: '130px', height: '4px' }}></div>
+                                        {/* EA Card aligned seamlessly */}
+                                        <div onClick={(e) => { e.stopPropagation(); setSelectedEmployeeProfile(rootAssistant); setPendingPhoto(null); }}
+                                        className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-56 flex flex-col items-center relative group/ea hover:shadow-2xl hover:-translate-y-1 transition-all cursor-pointer pt-6 pb-6 px-4" style={{overflow:'visible'}}>
+                                        {isEditingOrg && (
+                                            <div className="absolute -top-4 -right-4 flex space-x-1 z-30" data-html2canvas-ignore="true">
+                                            <button onClick={(e) => { e.stopPropagation(); setAssistantForm({ nodeId: orgData.id, assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Executive Assistant"><Edit className="w-3 h-3" /></button>
                                                 <button onClick={(e) => { e.stopPropagation(); setConfirmDialog({ message: `Remove ${rootAssistant.name} as Executive Assistant?`, confirmLabel: 'Remove', confirmClass: 'bg-red-500 hover:bg-red-600', onConfirm: () => { const newTree = updateNode(orgData, orgData.id, { assistantName: null }); saveTree(newTree); setConfirmDialog(null); } }); }} className="bg-red-500 text-white p-2 rounded-full shadow-lg hover:bg-red-600 transition" title="Remove Executive Assistant"><Trash2 className="w-3 h-3" /></button>
                                                 </div>
                                             )}
@@ -1054,16 +1054,16 @@
                                                 <div className="bg-[#292c44] text-white text-[9px] font-bold uppercase tracking-widest px-4 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30 whitespace-nowrap">Executive Assistant</div>
                                             </div>
                                             <div className="relative mb-3 group-hover/ea:scale-105 transition-transform duration-300" style={{width:'72px'}}>
-                                                <div className="absolute inset-0 bg-[#dfa634] rounded-xl blur-md opacity-20 group-hover/ea:opacity-40 transition-opacity"></div>
-                                                <img src={rootAssistant.profilePhoto} className="relative w-[72px] h-[72px] rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootAssistant.name} />
-                                            </div>
-                                            <p className="text-sm font-extrabold text-gray-800 w-full text-center leading-snug group-hover/ea:text-[#4a3189] transition-colors break-words">{rootAssistant.name}</p>
-                                            <p className="text-[10px] font-bold text-[#dfa634] w-full text-center mt-1 uppercase tracking-wide leading-snug break-words line-clamp-2">{rootAssistant.role}</p>
-                                            </div>
+                                            <div className="absolute inset-0 bg-[#dfa634] rounded-xl blur-md opacity-20 group-hover/ea:opacity-40 transition-opacity"></div>
+                                            <img src={rootAssistant.profilePhoto} className="relative w-[72px] h-[72px] rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootAssistant.name} />
                                         </div>
-                                        )}
-                                        
-                                        {!rootAssistant && isEditingOrg && (
+                                        <p className="text-sm font-extrabold text-gray-800 w-full text-center leading-normal group-hover/ea:text-[#4a3189] transition-colors break-words">{rootAssistant.name}</p>
+                                        <p className="text-[10px] font-bold text-[#dfa634] w-full text-center mt-1.5 uppercase tracking-wide leading-normal break-words pb-1">{rootAssistant.role}</p>
+                                        </div>
+                                    </div>
+                                    )}
+                                    
+                                    {!rootAssistant && isEditingOrg && (
                                         <div className="absolute flex items-center" style={{ left: '50%', top: '60px', transform: 'translateY(-50%)', zIndex: 15 }} data-html2canvas-ignore="true">
                                             <div className="bg-[#1e40af]" style={{ width: '130px', height: '4px' }}></div>
                                             <button onClick={(e) => { e.stopPropagation(); setAssistantForm({ nodeId: orgData.id, assistantName: '' }); }} className="px-4 py-3 bg-purple-50 text-[#4a3189] border border-dashed border-[#4a3189]/40 rounded-xl text-xs font-bold hover:bg-purple-100 transition flex items-center whitespace-nowrap shadow-sm">
