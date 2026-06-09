@@ -198,12 +198,6 @@
         };
 
         // ─── EXPORT WORKER ──────────────────────────────────────────────────────────
-        // Produces a clean, print-ready output that matches the screen:
-        //  • clones the chart off-screen and replaces blur/translucent styles with solid
-        //    white (html2canvas renders those poorly, which caused the murky/shifted look)
-        //  • captures at high scale for crisp text
-        //  • fits the ENTIRE chart onto a single A4 page (width AND height) so nothing is
-        //    cropped, sliced across pages, or distorted — just uniformly scaled.
         const A4 = { wmm: 210, hmm: 297 };
 
         const handleExport = async (format, setIsExporting, setAlertDialog, sourceId = 'org-chart-export-area', fileLabel = 'ELA_Org_Chart') => {
@@ -228,8 +222,6 @@
 
                 const clone = liveArea.cloneNode(true);
 
-                // Replace effects html2canvas mishandles (backdrop blur + translucent fills)
-                // with clean solid styling, and open any expanded panels fully.
                 const overrideStyle = document.createElement('style');
                 overrideStyle.textContent = `
                     * { transition: none !important; animation: none !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
@@ -240,7 +232,6 @@
                 wrapper.appendChild(clone);
                 document.body.appendChild(wrapper);
 
-                // Solidify translucent card backgrounds + remove blur so text/photos stay crisp.
                 clone.querySelectorAll('*').forEach(el => {
                     const cls = (typeof el.className === 'string') ? el.className : '';
                     if (cls.includes('bg-white/90') || cls.includes('backdrop-blur')) {
@@ -256,7 +247,6 @@
                 await preloadImagesForExport(wrapper);
                 await new Promise(r => setTimeout(r, 400));
 
-                // Measure true extent INCLUDING absolutely-positioned descendants (e.g. the EA card).
                 const wrapRect = wrapper.getBoundingClientRect();
                 let minLeft = 0, minTop = 0, maxRight = wrapper.scrollWidth, maxBottom = wrapper.scrollHeight;
                 wrapper.querySelectorAll('*').forEach(el => {
@@ -277,7 +267,7 @@
                 wrapper.style.width = contentW + 'px';
                 wrapper.style.height = contentH + 'px';
 
-                const SCALE = 3; // crisp text at print resolution
+                const SCALE = 3;
                 const canvas = await window.html2canvas(wrapper, {
                     backgroundColor: '#ffffff', scale: SCALE, useCORS: true, allowTaint: false, logging: false,
                     width: contentW, height: contentH, windowWidth: contentW, windowHeight: contentH,
@@ -292,7 +282,6 @@
                 });
                 document.body.removeChild(wrapper);
 
-                // White-backed full-resolution canvas (exactly what is on screen).
                 const fullCanvas = document.createElement('canvas');
                 fullCanvas.width = canvas.width;
                 fullCanvas.height = canvas.height;
@@ -317,7 +306,6 @@
                     }
                     const { jsPDF } = window.jspdf;
 
-                    // Orientation that best matches the chart's shape.
                     const chartLandscape = fullCanvas.width >= fullCanvas.height;
                     const pageWmm = chartLandscape ? A4.hmm : A4.wmm;
                     const pageHmm = chartLandscape ? A4.wmm : A4.hmm;
@@ -325,15 +313,13 @@
                     const printWmm = pageWmm - MARGIN_MM * 2;
                     const printHmm = pageHmm - MARGIN_MM * 2;
 
-                    // Fit the WHOLE chart onto one page (scale by the smaller of width/height ratios).
-                    // This guarantees nothing is cropped or split across pages — clean and balanced.
                     const scaleW = printWmm / fullCanvas.width;
                     const scaleH = printHmm / fullCanvas.height;
                     const s = Math.min(scaleW, scaleH);
                     const drawWmm = fullCanvas.width * s;
                     const drawHmm = fullCanvas.height * s;
-                    const offX = (pageWmm - drawWmm) / 2;   // center horizontally
-                    const offY = (pageHmm - drawHmm) / 2;   // center vertically
+                    const offX = (pageWmm - drawWmm) / 2;
+                    const offY = (pageHmm - drawHmm) / 2;
 
                     const pdf = new jsPDF({ orientation: chartLandscape ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
                     pdf.addImage(fullCanvas.toDataURL('image/png'), 'PNG', offX, offY, drawWmm, drawHmm, undefined, 'FAST');
@@ -347,7 +333,7 @@
             }
         };
 
-        // Reusable staff card — 4x6 passport-ratio photo, consistent with manager cards; drag handle for reorder
+        // Reusable staff card — updated to be slightly more compact with a perfectly square photo
         const StaffCard = ({ s, onClick, draggable, onDragStart, onDragOver, onDrop, onDragEnd, isDragging, isDragOver }) => (
             <div
                 draggable={draggable}
@@ -356,7 +342,7 @@
                 onDrop={onDrop}
                 onDragEnd={onDragEnd}
                 onClick={(e) => { e.stopPropagation(); if (onClick) onClick(s); }}
-                className={`relative bg-white border shadow-sm rounded-xl flex items-center w-[248px] cursor-pointer transition-all group/staff overflow-hidden
+                className={`relative bg-white border shadow-sm rounded-xl flex items-center w-[210px] cursor-pointer transition-all group/staff overflow-hidden
                     ${isDragOver ? 'border-[#4a3189] ring-2 ring-[#4a3189]/40' : 'border-gray-200/80 hover:border-[#dfa634]/60 hover:shadow-md'}
                     ${isDragging ? 'opacity-40' : ''}`}
             >
@@ -366,11 +352,12 @@
                     </div>
                 )}
                 <div className="flex-shrink-0 p-2">
-                    <img src={s.profilePhoto} className="w-[64px] h-[96px] object-cover rounded-lg ring-1 ring-gray-100 group-hover/staff:brightness-105 transition-all" alt={s.name} />
+                    {/* Fuller square image replacing the old portrait shape */}
+                    <img src={s.profilePhoto} className="w-[56px] h-[56px] object-cover rounded-lg ring-1 ring-gray-100 group-hover/staff:brightness-105 transition-all" alt={s.name} />
                 </div>
                 <div className="flex-1 min-w-0 pr-3 py-2 text-left">
-                    <p className="text-[12px] font-extrabold text-gray-800 leading-snug break-words group-hover/staff:text-[#4a3189]" title={s.name}>{s.name}</p>
-                    <p className="text-[9px] font-medium text-[#dfa634] leading-snug line-clamp-3 mt-0.5" title={s.role}>{s.role}</p>
+                    <p className="text-[11px] font-extrabold text-gray-800 leading-snug break-words group-hover/staff:text-[#4a3189] truncate" title={s.name}>{s.name}</p>
+                    <p className="text-[9px] font-medium text-[#dfa634] leading-snug line-clamp-2 mt-0.5" title={s.role}>{s.role}</p>
                 </div>
             </div>
         );
@@ -386,7 +373,7 @@
             if (isEmptyNode) {
                 return (
                 <li>
-                    <div className="flex flex-col items-center relative group w-72 mx-auto h-[3rem]">
+                    <div className="flex flex-col items-center relative group w-60 mx-auto h-[3rem]">
                     {isEditing && (
                         <div className="absolute -top-8 flex space-x-1 z-30">
                         <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="bg-blue-500 text-white p-1.5 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit"><Edit className="w-3 h-3" /></button>
@@ -409,10 +396,11 @@
                     {alignDrop && (
                     <div className="flex flex-col items-center w-full">
                         <div className="font-extrabold text-[12px] uppercase tracking-[0.2em] px-8 py-3 border-2 invisible pointer-events-none">SPACER</div>
-                        <div className="w-[3px] h-[30px] bg-[#e2d8f0]"></div>
+                        <div className="w-[4px] h-[60px] bg-[#1e40af]"></div>
                     </div>
                     )}
-                    <div id={exportId} className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-72 transition-all duration-300 z-10 relative flex flex-col group hover:shadow-2xl hover:-translate-y-1 mx-auto" style={{overflow:'visible'}}>
+                    {/* W-60 makes the department cards more compact to avoid overlap */}
+                    <div id={exportId} className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-60 transition-all duration-300 z-10 relative flex flex-col group hover:shadow-2xl hover:-translate-y-1 mx-auto" style={{overflow:'visible'}}>
 
                     {isEditing && (
                         <div className="absolute -top-4 -right-4 flex space-x-1 z-30" data-html2canvas-ignore="true">
@@ -440,16 +428,17 @@
                         )}
                     </div>
 
-                    {/* Manager (FIX #5: larger photo, FIX #2: clean text) */}
+                    {/* Manager Card with Perfect Square Photo */}
                     <div
                         onClick={(e) => { e.stopPropagation(); if(manager && onEmployeeClick) onEmployeeClick(manager); }}
                         className={`pt-10 pb-5 px-5 flex flex-col items-center rounded-t-3xl ${manager ? 'cursor-pointer' : ''}`}
                     >
                         {manager ? (
                         <>
-                            <div className="relative mb-3 group-hover:scale-105 transition-transform duration-300" style={{width:'96px'}}>
+                            <div className="relative mb-3 group-hover:scale-105 transition-transform duration-300" style={{width:'88px'}}>
                             <div className="absolute inset-0 bg-[#dfa634] rounded-xl blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
-                            <img src={manager.profilePhoto} className="relative w-[96px] h-[144px] rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={manager.name} />
+                            {/* Made photo a square (88x88) to look fuller without distorting */}
+                            <img src={manager.profilePhoto} className="relative w-[88px] h-[88px] rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={manager.name} />
                             </div>
                             <p className="text-sm font-extrabold text-gray-800 w-full text-center leading-snug group-hover:text-[#4a3189] transition-colors break-words">{manager.name}</p>
                             <p className="text-[10px] font-bold text-[#dfa634] w-full text-center mt-1 uppercase tracking-wide leading-snug break-words line-clamp-2">{manager.role}</p>
@@ -457,7 +446,7 @@
                         ) : null}
                     </div>
 
-                    {/* Staff panel — FIX #6: single vertical column, drag to reorder */}
+                    {/* Staff panel */}
                     {hasStaff && (
                         <div className={`transition-all duration-300 ease-in-out ${expanded ? 'max-h-[5000px] opacity-100' : 'max-h-0 opacity-0'}`} style={{overflow: expanded ? 'visible' : 'hidden'}}>
                         <div className="flex flex-col items-center w-full px-3 pb-8 pt-4 border-t border-gray-100/60 bg-gray-50/50 rounded-b-3xl">
@@ -469,7 +458,7 @@
                             <div className="flex flex-col items-center gap-2 w-full">
                             {staffList.map((s, idx) => (
                                 <React.Fragment key={s.id || idx}>
-                                {idx > 0 && <div className="w-[2px] h-3 bg-[#e2d8f0]"></div>}
+                                {idx > 0 && <div className="w-[4px] h-4 bg-[#1e40af]/60"></div>}
                                 <StaffCard
                                     s={s}
                                     onClick={onEmployeeClick}
@@ -516,7 +505,6 @@
         };
 
         function App() {
-            // ─── Multi-chart state (FIX #7) ──────────────────────────────────────────
             const [charts, setCharts] = useState({ main: { name: 'ELA Education', tree: defaultOrgData } });
             const [activeChartId, setActiveChartId] = useState('main');
             const [allEmployeesList, setAllEmployeesList] = useState(defaultEmployeesList);
@@ -528,7 +516,7 @@
             const [editingOrgNode, setEditingOrgNode] = useState(null);
             const [orgNodeForm, setOrgNodeForm] = useState({ id: '', dept: '', managerName: '', staffNames: [] });
             const [selectedEmployeeProfile, setSelectedEmployeeProfile] = useState(null);
-            const [pendingPhoto, setPendingPhoto] = useState(null); // FIX #4: hold uploaded photo until Save
+            const [pendingPhoto, setPendingPhoto] = useState(null); 
             const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
             const [addMenuConfig, setAddMenuConfig] = useState(null);
             const [newEmployeeForm, setNewEmployeeForm] = useState(null);
@@ -536,8 +524,8 @@
             const [alertDialog, setAlertDialog] = useState(null);
             const [isExporting, setIsExporting] = useState(false);
             const [assistantForm, setAssistantForm] = useState(null);
-            const [showCardLibrary, setShowCardLibrary] = useState(false);   // FIX #8
-            const [newChartName, setNewChartName] = useState(null);          // FIX #7
+            const [showCardLibrary, setShowCardLibrary] = useState(false);   
+            const [newChartName, setNewChartName] = useState(null);          
             const [librarySearch, setLibrarySearch] = useState('');
 
             const [orgZoomLevel, setOrgZoomLevel] = useState(0.85);
@@ -546,17 +534,15 @@
             const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
             const [activeOrgTab, setActiveOrgTab] = useState('Overall Structure');
 
-            // ─── Cloud load (charts doc + employees doc) ─────────────────────────────
             useEffect(() => {
                 if (!window.firebaseReady) { setIsDbLoading(false); return; }
                 const docRef = window.doc(window.db, 'orgChart', 'main');
                 const unsubscribe = window.onSnapshot(docRef, (docSnap) => {
                     if (docSnap.exists()) {
                         const data = docSnap.data();
-                        // Backward-compatible: old shape had {tree, employees}
                         if (data.charts) {
                             setCharts(data.charts);
-                            setActiveChartId(prev => data.charts[prev] ? prev : Object.keys(data.charts)[0]);
+                            setActiveChartId(prev => data.charts[prev] ? prev : Object.keys(data.charts));
                         } else if (data.tree) {
                             setCharts({ main: { name: 'ELA Education', tree: data.tree } });
                         }
@@ -572,7 +558,6 @@
                 return () => unsubscribe();
             }, []);
 
-            // Persist charts + employees. Pass overrides to avoid stale state.
             const saveAll = (newCharts, newEmployees) => {
                 const finalCharts = newCharts || charts;
                 const finalEmps = newEmployees || allEmployeesList;
@@ -588,7 +573,6 @@
                 }
             };
 
-            // Save a modified tree for the active chart.
             const saveTree = (newTree) => {
                 const newCharts = { ...charts, [activeChartId]: { ...charts[activeChartId], tree: newTree } };
                 saveAll(newCharts, null);
@@ -642,9 +626,8 @@
             const rootManager = getEmp(orgData.managerName);
             const rootAssistant = orgData.assistantName ? getEmp(orgData.assistantName) : null;
 
-            // FIX #4: upload stages a pending photo; user must press Save to commit.
             const handlePhotoStage = (e) => {
-                const file = e.target.files[0];
+                const file = e.target.files;
                 if (!file) return;
                 if (!file.type.match(/^image\/(jpeg|jpg|png)$/i)) {
                     setAlertDialog("Please upload a PNG or JPEG image file only.");
@@ -676,7 +659,6 @@
                 });
             };
 
-            // FIX #8: create a brand-new employee card stored in the shared library.
             const makeEmployee = (form) => {
                 const newId = `EMP${Date.now().toString(36).toUpperCase()}`;
                 const defaultAvatar = form.profilePhoto || `https://randomuser.me/api/portraits/${form.gender === 'Female' ? 'women' : 'men'}/${Math.floor(Math.random() * 90) + 1}.jpg`;
@@ -685,7 +667,7 @@
                     gender: form.gender || 'Other', dept: form.dept || 'Unassigned',
                     email: form.email || `${form.name.toLowerCase().replace(/\s+/g, '')}@company.com`,
                     contactNumber: form.contactNumber || 'TBD', branchOffice: form.branchOffice || 'HQ',
-                    insurance: form.insurance || 'Staff member', joinDate: new Date().toISOString().split('T')[0],
+                    insurance: form.insurance || 'Staff member', joinDate: new Date().toISOString().split('T'),
                     profilePhoto: defaultAvatar, defaultPhoto: defaultAvatar
                 };
             };
@@ -711,7 +693,6 @@
                 setNewEmployeeForm(null);
             };
 
-            // FIX #8: duplicate an existing library card.
             const duplicateEmployee = (emp) => {
                 const copy = makeEmployee({ ...emp, name: `${emp.name} (Copy)` });
                 saveEmployees([...allEmployeesList, copy]);
@@ -745,7 +726,6 @@
                 setAssistantForm(null);
             };
 
-            // Strip all people from a tree but keep the department/structure skeleton (names/photos/positions empty).
             const blankifyTree = (node, isRoot = false) => {
                 const fresh = {
                     id: isRoot ? 'root' : `node_${Math.random().toString(36).slice(2, 9)}`,
@@ -758,11 +738,6 @@
                 return fresh;
             };
 
-            // Create a new chart.
-            //  mode 'default'  → clone the DEFAULT org structure (departments preserved) with all people blank.
-            //  mode 'current'  → clone the CURRENTLY shown chart's structure with all people blank.
-            //  mode 'blank'    → a single empty root only.
-            // All modes reuse the shared card library.
             const createChart = (name, mode = 'default') => {
                 const id = `chart_${Date.now().toString(36)}`;
                 let tree;
@@ -786,7 +761,7 @@
                     confirmLabel: 'Delete Chart', confirmClass: 'bg-red-500 hover:bg-red-600',
                     onConfirm: () => {
                         const newCharts = { ...charts }; delete newCharts[id];
-                        const fallback = Object.keys(newCharts)[0];
+                        const fallback = Object.keys(newCharts);
                         saveAll(newCharts, null);
                         setActiveChartId(fallback);
                         setActiveOrgTab('Overall Structure');
@@ -843,7 +818,7 @@
                 <div className="flex flex-col h-screen bg-[#f4f7fa] font-sans relative">
 
                 {isExporting && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center">
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z- flex flex-col items-center justify-center">
                         <Loader2 className="w-14 h-14 text-[#dfa634] animate-spin mb-5" />
                         <h2 className="text-xl font-bold text-white">Preparing Export…</h2>
                         <p className="text-white/70 text-sm mt-2">Rendering current view to an A4 print-quality page. Please wait.</p>
@@ -858,7 +833,6 @@
                     <h1 className="text-xl font-extrabold text-gray-800 tracking-tight">Interactive <span className="text-[#dfa634]">Org Chart</span></h1>
                     </div>
                     <div className="flex items-center space-x-4">
-                    {/* FIX #7: chart selector */}
                     <div className="flex items-center space-x-2 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-200">
                         <LayoutGrid className="w-4 h-4 text-[#4a3189]" />
                         <select value={activeChartId}
@@ -986,17 +960,22 @@
                     onMouseUp={() => setIsDraggingOrg(false)} onMouseLeave={() => setIsDraggingOrg(false)}>
                     <div className="absolute inset-0" style={{ backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)', backgroundSize: '40px 40px', opacity: 0.3, pointerEvents: 'none' }}></div>
 
+                    {/* CSS UPDATES: 
+                        - Padding and line heights increased to 80px to spread tree apart vertically
+                        - Horizontal padding increased to 32px to spread cards apart horizontally
+                        - Line color unified to a thick Dark Blue (#1e40af)
+                    */}
                     <style>{`
-                        .modern-tree ul { padding-top: 30px; position: relative; display: flex; justify-content: center; }
-                        .modern-tree li { flex: 1; float: left; text-align: center; list-style-type: none; position: relative; padding: 30px 10px 0 10px; transition: all 0.3s; display: flex; flex-direction: column; align-items: center; }
-                        .modern-tree li::before, .modern-tree li::after { content: ''; position: absolute; top: 0; right: 50%; border-top: 3px solid #e2d8f0; width: 50%; height: 30px; z-index: 0; }
-                        .modern-tree li::after { right: auto; left: 50%; border-left: 3px solid #e2d8f0; }
+                        .modern-tree ul { padding-top: 80px; position: relative; display: flex; justify-content: center; }
+                        .modern-tree li { flex: 1; float: left; text-align: center; list-style-type: none; position: relative; padding: 80px 32px 0 32px; transition: all 0.3s; display: flex; flex-direction: column; align-items: center; }
+                        .modern-tree li::before, .modern-tree li::after { content: ''; position: absolute; top: 0; right: 50%; border-top: 4px solid #1e40af; width: 50%; height: 80px; z-index: 0; }
+                        .modern-tree li::after { right: auto; left: 50%; border-left: 4px solid #1e40af; }
                         .modern-tree li:only-child::after, .modern-tree li:only-child::before { display: none; }
                         .modern-tree li:only-child { padding-top: 0; }
                         .modern-tree li:first-child::before, .modern-tree li:last-child::after { border: 0 none; }
-                        .modern-tree li:last-child::before { border-right: 3px solid #e2d8f0; border-radius: 0 16px 0 0; }
+                        .modern-tree li:last-child::before { border-right: 4px solid #1e40af; border-radius: 0 16px 0 0; }
                         .modern-tree li:first-child::after { border-radius: 16px 0 0 0; }
-                        .modern-tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; border-left: 3px solid #e2d8f0; width: 0; height: 30px; transform: translateX(-50%); z-index: 0; }
+                        .modern-tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; border-left: 4px solid #1e40af; width: 0; height: 80px; transform: translateX(-50%); z-index: 0; }
                         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
                         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
                         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -1012,10 +991,11 @@
                             {activeOrgTab === 'Overall Structure' ? (
                             (orgData.managerName || (orgData.children && orgData.children.length)) ? (
                             <li>
-                                <div className="flex flex-col items-center">
-                                {/* Head (Country Director) with Executive Assistant to the RIGHT, joined by a reporting line */}
+                                <div className="flex flex-col items-center w-full">
+                                {/* Head (Country Director) */}
                                 <div className="relative flex justify-center w-full">
-                                <div id="dept-export-root" className="z-10 relative group cursor-pointer hover:-translate-y-1 transition-transform duration-300 mx-auto w-72" onClick={() => { if(rootManager) { setSelectedEmployeeProfile(rootManager); setPendingPhoto(null); } }}>
+                                {/* Head Card Width = 60 (240px). So center to edge is 120px. */}
+                                <div id="dept-export-root" className="z-10 relative group cursor-pointer hover:-translate-y-1 transition-transform duration-300 mx-auto w-60" onClick={() => { if(rootManager) { setSelectedEmployeeProfile(rootManager); setPendingPhoto(null); } }}>
                                     {isEditingOrg && (
                                     <div className="absolute -top-4 -right-4 flex space-x-1 z-30" data-html2canvas-ignore="true">
                                         <button onClick={(e) => { e.stopPropagation(); setEditingOrgNode(orgData.id); setOrgNodeForm({ id: orgData.id, dept: orgData.dept, managerName: orgData.managerName || '', staffNames: orgData.staffNames || [], assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Department"><Edit className="w-3 h-3" /></button>
@@ -1033,65 +1013,66 @@
                                     </div>
                                     </div>
                                     {orgData.managerName ? (
-                                    <div className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl pt-10 pb-5 px-5 w-72 flex items-center flex-col relative group-hover:shadow-2xl transition-all" style={{overflow:'visible'}}>
-                                    <div className="relative mb-3 group-hover:scale-105 transition-transform duration-300" style={{width:'96px'}}>
+                                    <div className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl pt-10 pb-5 px-5 w-60 flex items-center flex-col relative group-hover:shadow-2xl transition-all" style={{overflow:'visible'}}>
+                                    <div className="relative mb-3 group-hover:scale-105 transition-transform duration-300" style={{width:'88px'}}>
                                         <div className="absolute inset-0 bg-[#dfa634] rounded-xl blur-md opacity-20 group-hover:opacity-40 transition-opacity"></div>
-                                        <img src={rootManager.profilePhoto} className="relative w-[96px] h-[144px] rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootManager.name} />
+                                        <img src={rootManager.profilePhoto} className="relative w-[88px] h-[88px] rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootManager.name} />
                                     </div>
                                     <p className="text-sm font-extrabold text-gray-800 hover:text-[#4a3189] transition-colors w-full text-center leading-snug break-words">{rootManager.name}</p>
                                     <p className="text-[10px] font-bold text-[#dfa634] uppercase tracking-wide mt-1 w-full text-center leading-snug break-words line-clamp-2">{rootManager.role}</p>
                                     </div>
                                     ) : (
-                                    <div className="bg-white/90 border border-dashed border-gray-300 rounded-3xl pt-12 pb-6 px-5 w-72 flex items-center flex-col">
+                                    <div className="bg-white/90 border border-dashed border-gray-300 rounded-3xl pt-12 pb-6 px-5 w-60 flex items-center flex-col">
                                         <p className="text-sm font-bold text-gray-400">No head assigned</p>
                                         {isEditingOrg && <button onClick={(e)=>{e.stopPropagation(); setEditingOrgNode(orgData.id); setOrgNodeForm({ id: orgData.id, dept: orgData.dept, managerName: '', staffNames: orgData.staffNames || [], assistantName: orgData.assistantName || '' });}} className="mt-2 text-xs font-bold text-[#4a3189]">Assign head</button>}
                                     </div>
                                     )}
+                                </div>
+                                </div>
 
-                                    {/* Executive Assistant — below the head and offset to the RIGHT, joined by an L-shaped reporting line */}
-                                    {rootAssistant && (
-                                    <div className="absolute left-1/2 flex items-start" style={{top:'78%', zIndex:15}}>
-                                        {/* L-shaped reporting line: short drop from the head, then a horizontal run to the EA */}
-                                        <div className="relative flex items-center" style={{height:'1px'}}>
-                                            {/* vertical drop sits on the head's center axis */}
-                                            <div className="absolute bg-[#a9c0e8]" style={{width:'3px', height:'70px', left:'0px', top:'-70px'}}></div>
-                                            {/* horizontal run to the right */}
-                                            <div className="bg-[#a9c0e8]" style={{width:'120px', height:'3px'}}></div>
-                                        </div>
-                                        <div onClick={(e) => { e.stopPropagation(); setSelectedEmployeeProfile(rootAssistant); setPendingPhoto(null); }}
-                                        className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-72 flex flex-col items-center relative group/ea hover:shadow-2xl hover:-translate-y-1 transition-all cursor-pointer pt-10 pb-5 px-5 -mt-[88px]" style={{overflow:'visible'}}>
-                                        {isEditingOrg && (
-                                            <div className="absolute -top-4 -right-4 flex space-x-1 z-30" data-html2canvas-ignore="true">
-                                            <button onClick={(e) => { e.stopPropagation(); setAssistantForm({ nodeId: orgData.id, assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Executive Assistant"><Edit className="w-3 h-3" /></button>
-                                            <button onClick={(e) => { e.stopPropagation(); setConfirmDialog({ message: `Remove ${rootAssistant.name} as Executive Assistant?`, confirmLabel: 'Remove', confirmClass: 'bg-red-500 hover:bg-red-600', onConfirm: () => { const newTree = updateNode(orgData, orgData.id, { assistantName: null }); saveTree(newTree); setConfirmDialog(null); } }); }} className="bg-red-500 text-white p-2 rounded-full shadow-lg hover:bg-red-600 transition" title="Remove Executive Assistant"><Trash2 className="w-3 h-3" /></button>
+                                {/* Vertical extension line with the Executive Assistant branching from it */}
+                                {(orgData.children && orgData.children.length > 0) || rootAssistant || isEditingOrg ? (
+                                    <div className="relative flex flex-col items-center w-full">
+                                        {/* Vertical line. Extra tall if we need to fit the EA card without hitting the children bracket below */}
+                                        <div className="w-[4px] bg-[#1e40af]" style={{ height: (rootAssistant || isEditingOrg) ? '150px' : '80px' }}></div>
+                                        
+                                        {/* Executive Assistant - cleanly branches from the vertical stem */}
+                                        {rootAssistant && (
+                                        <div className="absolute flex items-center" style={{ left: '50%', top: '60px', transform: 'translateY(-50%)', zIndex: 15 }}>
+                                            {/* Visible horizontal line connecting to the EA - Lengthened to move it away */}
+                                            <div className="bg-[#1e40af]" style={{ width: '130px', height: '4px' }}></div>
+                                            {/* EA Card aligned seamlessly */}
+                                            <div onClick={(e) => { e.stopPropagation(); setSelectedEmployeeProfile(rootAssistant); setPendingPhoto(null); }}
+                                            className="bg-white/90 backdrop-blur-xl border border-gray-200/80 shadow-xl shadow-purple-900/10 rounded-3xl w-56 flex flex-col items-center relative group/ea hover:shadow-2xl hover:-translate-y-1 transition-all cursor-pointer pt-6 pb-4 px-4" style={{overflow:'visible'}}>
+                                            {isEditingOrg && (
+                                                <div className="absolute -top-4 -right-4 flex space-x-1 z-30" data-html2canvas-ignore="true">
+                                                <button onClick={(e) => { e.stopPropagation(); setAssistantForm({ nodeId: orgData.id, assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition" title="Edit Executive Assistant"><Edit className="w-3 h-3" /></button>
+                                                <button onClick={(e) => { e.stopPropagation(); setConfirmDialog({ message: `Remove ${rootAssistant.name} as Executive Assistant?`, confirmLabel: 'Remove', confirmClass: 'bg-red-500 hover:bg-red-600', onConfirm: () => { const newTree = updateNode(orgData, orgData.id, { assistantName: null }); saveTree(newTree); setConfirmDialog(null); } }); }} className="bg-red-500 text-white p-2 rounded-full shadow-lg hover:bg-red-600 transition" title="Remove Executive Assistant"><Trash2 className="w-3 h-3" /></button>
+                                                </div>
+                                            )}
+                                            <div className="absolute -top-4 left-0 right-0 flex justify-center z-20 pointer-events-none">
+                                                <div className="bg-[#292c44] text-white text-[9px] font-bold uppercase tracking-widest px-4 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30 whitespace-nowrap">Executive Assistant</div>
                                             </div>
+                                            <div className="relative mb-3 group-hover/ea:scale-105 transition-transform duration-300" style={{width:'72px'}}>
+                                                <div className="absolute inset-0 bg-[#dfa634] rounded-xl blur-md opacity-20 group-hover/ea:opacity-40 transition-opacity"></div>
+                                                <img src={rootAssistant.profilePhoto} className="relative w-[72px] h-[72px] rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootAssistant.name} />
+                                            </div>
+                                            <p className="text-sm font-extrabold text-gray-800 w-full text-center leading-snug group-hover/ea:text-[#4a3189] transition-colors break-words">{rootAssistant.name}</p>
+                                            <p className="text-[10px] font-bold text-[#dfa634] w-full text-center mt-1 uppercase tracking-wide leading-snug break-words line-clamp-2">{rootAssistant.role}</p>
+                                            </div>
+                                        </div>
                                         )}
-                                        <div className="absolute -top-4 left-0 right-0 flex justify-center z-20 pointer-events-none">
-                                            <div className="bg-[#4a3189] text-white text-[9px] font-bold uppercase tracking-widest px-4 py-2 rounded-full shadow-lg border border-white/10 ring-2 ring-[#dfa634]/30 whitespace-nowrap">Executive Assistant</div>
+                                        
+                                        {!rootAssistant && isEditingOrg && (
+                                        <div className="absolute flex items-center" style={{ left: '50%', top: '60px', transform: 'translateY(-50%)', zIndex: 15 }} data-html2canvas-ignore="true">
+                                            <div className="bg-[#1e40af]" style={{ width: '130px', height: '4px' }}></div>
+                                            <button onClick={(e) => { e.stopPropagation(); setAssistantForm({ nodeId: orgData.id, assistantName: '' }); }} className="px-4 py-3 bg-purple-50 text-[#4a3189] border border-dashed border-[#4a3189]/40 rounded-xl text-xs font-bold hover:bg-purple-100 transition flex items-center whitespace-nowrap shadow-sm">
+                                            <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Add Executive Assistant
+                                            </button>
                                         </div>
-                                        <div className="relative mb-3 group-hover/ea:scale-105 transition-transform duration-300" style={{width:'96px'}}>
-                                            <div className="absolute inset-0 bg-[#dfa634] rounded-xl blur-md opacity-20 group-hover/ea:opacity-40 transition-opacity"></div>
-                                            <img src={rootAssistant.profilePhoto} className="relative w-[96px] h-[144px] rounded-xl object-cover shadow-sm ring-4 ring-white border border-gray-100" alt={rootAssistant.name} />
-                                        </div>
-                                        <p className="text-sm font-extrabold text-gray-800 w-full text-center leading-snug group-hover/ea:text-[#4a3189] transition-colors break-words">{rootAssistant.name}</p>
-                                        <p className="text-[10px] font-bold text-[#dfa634] w-full text-center mt-1 uppercase tracking-wide leading-snug break-words line-clamp-2">{rootAssistant.role}</p>
-                                        </div>
+                                        )}
                                     </div>
-                                    )}
-                                    {!rootAssistant && isEditingOrg && (
-                                    <div className="absolute left-1/2 flex items-start" style={{top:'78%'}} data-html2canvas-ignore="true">
-                                        <div className="relative flex items-center" style={{height:'1px'}}>
-                                            <div className="absolute bg-[#a9c0e8]" style={{width:'3px', height:'70px', left:'0px', top:'-70px'}}></div>
-                                            <div className="bg-[#a9c0e8]" style={{width:'120px', height:'3px'}}></div>
-                                        </div>
-                                        <button onClick={(e) => { e.stopPropagation(); setAssistantForm({ nodeId: orgData.id, assistantName: '' }); }} className="px-4 py-3 -mt-7 bg-purple-50 text-[#4a3189] border border-dashed border-[#4a3189]/40 rounded-xl text-xs font-bold hover:bg-purple-100 transition flex items-center whitespace-nowrap">
-                                        <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Add Executive Assistant
-                                        </button>
-                                    </div>
-                                    )}
-                                </div>
-                                </div>
-
+                                ) : null}
                                 </div>
 
                                 <ul>{orgData.children.map(child => renderOrgTree(child, 1))}</ul>
@@ -1130,7 +1111,6 @@
                                     {isUploadingPhoto ? <><Loader2 className="w-3 h-3 mr-2 animate-spin" /> Processing…</> : <><Camera className="w-3 h-3 mr-2" /> Upload New Photo</>}
                                     <input type="file" accept="image/png,image/jpeg,image/jpg" className="hidden" disabled={isUploadingPhoto} onChange={handlePhotoStage} />
                                 </label>
-                                {/* FIX #4: explicit Save button appears after upload */}
                                 {pendingPhoto && (
                                     <div className="flex gap-2">
                                         <button onClick={handlePhotoSave} className="flex-1 px-4 py-2.5 bg-green-500 hover:bg-green-600 text-white text-xs font-bold rounded-xl shadow-lg flex items-center justify-center transition"><Save className="w-3.5 h-3.5 mr-2" /> Save Photo</button>
@@ -1188,7 +1168,7 @@
                     </div>
                 )}
 
-                {/* ─── Card Library (FIX #8) ──────────────────────────────────────────── */}
+                {/* ─── Card Library ──────────────────────────────────────────── */}
                 {showCardLibrary && (
                     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
@@ -1222,7 +1202,7 @@
                     </div>
                 )}
 
-                {/* ─── New chart dialog (FIX #7) ──────────────────────────────────────── */}
+                {/* ─── New chart dialog ──────────────────────────────────────── */}
                 {newChartName !== null && (
                     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
