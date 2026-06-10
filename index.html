@@ -616,7 +616,7 @@
             const [charts, setCharts] = useState({ main: { name: 'ELA Education', tree: defaultOrgData } });
             const [activeChartId, setActiveChartId] = useState('main');
             const [allEmployeesList, setAllEmployeesList] = useState(defaultEmployeesList);
-            const [isDbLoading, setIsDbLoading] = useState(true);
+            const [isDbLoading, setIsDbLoading] = useState(false);
 
             const orgData = charts[activeChartId]?.tree || defaultOrgData;
 
@@ -643,27 +643,43 @@
             const [activeOrgTab, setActiveOrgTab] = useState('Overall Structure');
 
             useEffect(() => {
-                if (!window.firebaseReady) { setIsDbLoading(false); return; }
-                const docRef = window.doc(window.db, 'orgChart', 'main');
-                const unsubscribe = window.onSnapshot(docRef, (docSnap) => {
-                    if (docSnap.exists()) {
-                        const data = docSnap.data();
-                        if (data.charts) {
-                            setCharts(data.charts);
-                            setActiveChartId(prev => data.charts[prev] ? prev : Object.keys(data.charts)[0]);
-                        } else if (data.tree) {
-                            setCharts({ main: { name: 'ELA Education', tree: data.tree } });
+                // Firebase module sets window.firebaseReady asynchronously.
+                // Poll a couple times to catch it; if not ready, stay in local mode.
+                let unsubFn = null;
+                let cancelled = false;
+                const connect = () => {
+                    if (cancelled || unsubFn) return;
+                    if (!window.firebaseReady || !window.db) return;
+                    setIsDbLoading(true);
+                    const docRef = window.doc(window.db, 'orgChart', 'main');
+                    unsubFn = window.onSnapshot(docRef, (docSnap) => {
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            if (data.charts) {
+                                setCharts(data.charts);
+                                setActiveChartId(prev => data.charts[prev] ? prev : Object.keys(data.charts)[0]);
+                            } else if (data.tree) {
+                                setCharts({ main: { name: 'ELA Education', tree: data.tree } });
+                            }
+                            if (data.employees) setAllEmployeesList(data.employees);
+                            setIsDbLoading(false);
+                        } else {
+                            window.setDoc(docRef, {
+                                charts: { main: { name: 'ELA Education', tree: defaultOrgData } },
+                                employees: defaultEmployeesList
+                            }).then(() => setIsDbLoading(false));
                         }
-                        if (data.employees) setAllEmployeesList(data.employees);
-                        setIsDbLoading(false);
-                    } else {
-                        window.setDoc(docRef, {
-                            charts: { main: { name: 'ELA Education', tree: defaultOrgData } },
-                            employees: defaultEmployeesList
-                        }).then(() => setIsDbLoading(false));
-                    }
-                });
-                return () => unsubscribe();
+                    });
+                };
+                connect();
+                const t1 = setTimeout(connect, 600);
+                const t2 = setTimeout(connect, 1800);
+                return () => {
+                    cancelled = true;
+                    clearTimeout(t1);
+                    clearTimeout(t2);
+                    if (unsubFn) unsubFn();
+                };
             }, []);
 
             const saveAll = (newCharts, newEmployees) => {
@@ -1099,7 +1115,7 @@
                                                                 style={{ width: '252px', overflow: 'visible' }}
                                                                 onClick={() => { if (rootManager) { setSelectedEmployeeProfile(rootManager); setPendingPhoto(null); } }}
                                                             >
-                                                                {isEditing && (
+                                                                {isEditingOrg && (
                                                                     <div className="absolute -top-4 -right-4 flex space-x-1 z-30" data-html2canvas-ignore="true">
                                                                         <button onClick={(e) => { e.stopPropagation(); setEditingOrgNode(orgData.id); setOrgNodeForm({ id: orgData.id, dept: orgData.dept, managerName: orgData.managerName || '', staffNames: orgData.staffNames || [], assistantName: orgData.assistantName || '' }); }} className="bg-blue-500 text-white p-2 rounded-full shadow-lg hover:bg-blue-600 transition"><Edit className="w-3 h-3" /></button>
                                                                         <button onClick={(e) => { e.stopPropagation(); setAddMenuConfig({ parentId: orgData.id, deptName: orgData.dept }); }} className="bg-green-500 text-white p-2 rounded-full shadow-lg hover:bg-green-600 transition"><Plus className="w-3 h-3" /></button>
